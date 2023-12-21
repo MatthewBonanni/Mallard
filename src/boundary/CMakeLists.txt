@@ -1,8 +1,7 @@
-# CMakeLists.txt for MeshLib
-set(LIB_NAME MeshLib)
+# CMakeLists.txt for BoundaryLib
+set(LIB_NAME BoundaryLib)
 set(LIB_SRCS
-    mesh.cpp
-    zone.cpp
+    boundary.cpp
 )
 
 # Add the library
@@ -13,4 +12,3 @@ target_include_directories(${LIB_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(${LIB_NAME} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/../)
 
 # Link libraries
-target_link_libraries(${LIB_NAME} PUBLIC CommonLib)
