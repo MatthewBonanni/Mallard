@@ -1,8 +1,7 @@
-# CMakeLists.txt for NumericsLib
-set(LIB_NAME NumericsLib)
+# CMakeLists.txt for PhysicsLib
+set(LIB_NAME PhysicsLib)
 set(LIB_SRCS
-    time_integrator.cpp
-    face_reconstruction.cpp
+    physics.cpp
 )
 
 # Add the library
