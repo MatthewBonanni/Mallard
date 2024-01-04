@@ -1,30 +1,30 @@
 /**
- * @file boundary_upt.h
+ * @file boundary_symmetry.h
  * @author Matthew Bonanni (mbonanni001@gmail.com)
- * @brief UPT boundary condition class declaration.
+ * @brief Symmetry boundary condition class definition.
  * @version 0.1
- * @date 2023-12-20
+ * @date 2024-01-04
  * 
- * @copyright Copyright (c) 2023 Matthew Bonanni
+ * @copyright Copyright (c) 2024 Matthew Bonanni
  * 
  */
 
-#ifndef BOUNDARY_UPT_H
-#define BOUNDARY_UPT_H
+#ifndef BOUNDARY_SYMMETRY_H
+#define BOUNDARY_SYMMETRY_H
 
 #include "boundary.h"
 
-class BoundaryUPT : public Boundary {
+class BoundarySymmetry : public Boundary {
     public:
         /**
-         * @brief Construct a new BoundaryUPT object
+         * @brief Construct a new BoundarySymmetry object
          */
-        BoundaryUPT();
+        BoundarySymmetry();
 
         /**
-         * @brief Destroy the BoundaryUPT object
+         * @brief Destroy the BoundarySymmetry object
          */
-        ~BoundaryUPT();
+        ~BoundarySymmetry();
 
         /**
          * @brief Print the boundary.
@@ -46,17 +46,6 @@ class BoundaryUPT : public Boundary {
                    StateVector * rhs) override;
     protected:
     private:
-        // Input
-        NVector u_bc;
-        double p_bc;
-        double T_bc;
-
-        // Dependent
-        double rho_bc;
-        double e_bc;
-        double E_bc;
-        double H_bc;
-        Primitives primitives_bc;
 };
 
-#endif // BOUNDARY_UPT_H
+#endif // BOUNDARY_SYMMETRY_H
