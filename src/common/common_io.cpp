@@ -11,6 +11,14 @@
 
 #include "common_io.h"
 
+void print_logo() {
+    std::cout << R"(    __  ___      ____               __)" << std::endl
+              << R"(   /  |/  /___ _/ / /___ __________/ /)" << std::endl
+              << R"(  / /|_/ / __ `/ / / __ `/ ___/ __  / )" << std::endl
+              << R"( / /  / / /_/ / / / /_/ / /  / /_/ /  )" << std::endl
+              << R"(/_/  /_/\__,_/_/_/\__,_/_/   \__,_/   )" << std::endl;
+}
+
 std::string endianness() {
     int i = 1;
     char * c = (char *) &i;

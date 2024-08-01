@@ -37,16 +37,10 @@ Solver::~Solver() {
 }
 
 int Solver::init(const std::string& input_file_name) {
-    print_logo();
     std::cout << LOG_SEPARATOR << std::endl;
     std::cout << "Initializing solver..." << std::endl;
-#ifdef Mallard_USE_DOUBLES
-    std::cout << "Mallard has been compiled with DOUBLE precision." << std::endl;
-#else   
-    std::cout << "Mallard has been compiled with SINGLE precision." << std::endl;
-#endif
     std::cout << "Parsing input file: " << input_file_name << std::endl;
-    std::cout << LOG_SEPARATOR << std::endl;
+    std::cout << std::endl;
 
     input = toml::parse(input_file_name);
     std::cout << input << std::endl;
@@ -521,14 +515,6 @@ void Solver::deallocate_memory() {
 
     // Make sure all Kokkos threads are done.
     Kokkos::fence();
-}
-
-void Solver::print_logo() const {
-    std::cout << R"(    __  ___      ____               __)" << std::endl
-              << R"(   /  |/  /___ _/ / /___ __________/ /)" << std::endl
-              << R"(  / /|_/ / __ `/ / / __ `/ ___/ __  / )" << std::endl
-              << R"( / /  / / /_/ / / / /_/ / /  / /_/ /  )" << std::endl
-              << R"(/_/  /_/\__,_/_/_/\__,_/_/   \__,_/   )" << std::endl;
 }
 
 void Solver::take_step() {

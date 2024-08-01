@@ -11,6 +11,7 @@ add_subdirectory(solver)
 add_subdirectory(physics)
 add_subdirectory(io)
 
+target_link_libraries(Mallard MPI::MPI_CXX)
 target_link_libraries(Mallard Kokkos::kokkos)
 target_link_libraries(Mallard Kokkos::kokkoskernels)
 target_link_libraries(Mallard CommonLib)

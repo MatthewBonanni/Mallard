@@ -11,8 +11,10 @@
 
 #include <iostream>
 
+#include <mpi.h>
 #include <Kokkos_Core.hpp>
 
+#include "common/common_io.h"
 #include "solver/solver.h"
 
 /**
@@ -43,18 +45,46 @@ int main(int argc, char* argv[]) {
 
     int status = 0;
 
+    // Initialize MPI
+    MPI_Init(&argc, &argv);
     // Initialize Kokkos
     Kokkos::initialize(argc, argv);
     {
 
-    std::cout << "The default execution space is: "
-              << typeid(Kokkos::DefaultExecutionSpace).name() << std::endl;
-    std::cout << "This space has concurrency: "
-              << Kokkos::DefaultExecutionSpace::concurrency() << std::endl;
-    std::cout << "The default host execution space is: "
-              << typeid(Kokkos::DefaultHostExecutionSpace).name() << std::endl;
-    std::cout << "This space has concurrency: "
-              << Kokkos::DefaultHostExecutionSpace::concurrency() << std::endl;
+    int mpi_rank, mpi_size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &mpi_size);
+
+    if (mpi_rank == 0) {
+        std::cout << LOG_SEPARATOR << std::endl;
+        print_logo();
+        std::cout << LOG_SEPARATOR << std::endl;
+        std::cout << "Computational configuration:" << std::endl;
+
+        // Print MPI information
+        std::cout << std::endl;
+        std::cout << "MPI:" << std::endl;
+        std::cout << "> Number of MPI processes: " << mpi_size << std::endl;
+
+        // Print Kokkos execution space information
+        std::cout << std::endl;
+        std::cout << "Kokkos:" << std::endl;
+        std::cout << "> The default execution space is: "
+                  << typeid(Kokkos::DefaultExecutionSpace).name() << std::endl;
+        std::cout << "> This space has concurrency: "
+                  << Kokkos::DefaultExecutionSpace::concurrency() << std::endl;
+        std::cout << "> The default host execution space is: "
+                  << typeid(Kokkos::DefaultHostExecutionSpace).name() << std::endl;
+        std::cout << "> This space has concurrency: "
+                  << Kokkos::DefaultHostExecutionSpace::concurrency() << std::endl;
+        
+        std::cout << std::endl;
+        #ifdef Mallard_USE_DOUBLES
+            std::cout << "Mallard has been compiled with DOUBLE precision." << std::endl;
+        #else   
+            std::cout << "Mallard has been compiled with SINGLE precision." << std::endl;
+        #endif
+    }
 
     // Create solver object
     Solver solver;
@@ -72,7 +102,10 @@ int main(int argc, char* argv[]) {
     }
 
     }
+
+    // Finalize
     Kokkos::finalize();
+    MPI_Finalize();
 
     return status;
 }

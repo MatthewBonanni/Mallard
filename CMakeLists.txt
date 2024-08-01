@@ -17,13 +17,17 @@ if (${PROJECT_NAME}_USE_DOUBLES)
     add_compile_definitions(${PROJECT_NAME}_USE_DOUBLES)
 endif()
 
-# Libraries
+# MPI
+find_package(MPI REQUIRED)
+
+# Kokkos
 set(Kokkos_ROOT "${CMAKE_SOURCE_DIR}/build/external/kokkos" CACHE PATH "Kokkos install directory")
 set(KokkosKernels_ROOT "${CMAKE_SOURCE_DIR}/build/external/kokkos-kernels" CACHE PATH "KokkosKernels install directory")
 
 find_package(Kokkos REQUIRED)
 find_package(KokkosKernels REQUIRED)
 
+# External libraries
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/src/external/exprtk")
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/src/external/toml11/single_include")
 

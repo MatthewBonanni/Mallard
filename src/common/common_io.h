@@ -12,10 +12,16 @@
 #ifndef COMMON_IO_H
 #define COMMON_IO_H
 
+#include <iostream>
 #include <string>
 
 #define LOG_SEPARATOR "----------------------------------------------------------------------"
 #define LEN_STEP 6
+
+/**
+ * @brief Print the logo.
+ */
+void print_logo();
 
 /**
  * @brief Return the endianness of the system for VTU file writing.
