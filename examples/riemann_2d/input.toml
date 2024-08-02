@@ -1,14 +1,14 @@
 [run]
 # n_steps = 100000
-t_stop = 0.3
+t_stop = 1.0
 # t_wall_stop = 3.0
 # dt = 1.0e-5
-cfl = 0.1
+cfl = 1.0
 
 [mesh]
 type = "cartesian"
-Nx = 1000
-Ny = 1000
+Nx = 2048
+Ny = 2048
 Lx = 1.0
 Ly = 1.0
 
@@ -49,25 +49,26 @@ p = """\
 
 [[boundaries]]
 name = "left"
-type = "symmetry"
+type = "extrapolation"
 
 [[boundaries]]
 name = "right"
-type = "symmetry"
+type = "extrapolation"
 
 [[boundaries]]
 name = "top"
-type = "symmetry"
+type = "extrapolation"
 
 [[boundaries]]
 name = "bottom"
-type = "symmetry"
+type = "extrapolation"
 
 [numerics]
 face_reconstruction = "FO"
 riemann_solver = "HLLC"
 time_integrator = "SSPRK3"
 check_nan = true
+check_nan_flux = true
 
 [physics]
 type = "euler"
@@ -75,9 +76,11 @@ gamma = 1.4
 p_ref = 101325.0
 T_ref = 298.15
 rho_ref = 1.225
+p_min = 1.0e-6
+# p_max = 1.0e20
 
 [output]
-check_interval = 100
+check_interval = 10
 
 [[write_data]]
 prefix = "./solut/all/riemann_all"
