@@ -43,13 +43,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    int status = 0;
-
     // Initialize MPI
     MPI_Init(&argc, &argv);
     // Initialize Kokkos
     Kokkos::initialize(argc, argv);
-    {
 
     int mpi_rank, mpi_size;
     MPI_Comm_rank(MPI_COMM_WORLD, &mpi_rank);
@@ -86,6 +83,8 @@ int main(int argc, char* argv[]) {
         #endif
     }
 
+    int status = 0;
+
     // Create solver object
     Solver solver;
     status = solver.init(inputFileName);
@@ -99,8 +98,6 @@ int main(int argc, char* argv[]) {
     if (status != 0) {
         std::cerr << "Error: Solver run failed." << std::endl;
         return status;
-    }
-
     }
 
     // Finalize
