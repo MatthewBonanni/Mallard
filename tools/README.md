@@ -15,3 +15,5 @@ Python scripts need numpy, scipy, matplotlib, imageio and imageio-ffmpeg; the 3D
 | `make_mallard_mesh.py` | Triangle mesh (via the gmsh Python module) around a flying mallard silhouette |
 | `plot_taylor_green.py` | Taylor-Green vortex: kinetic energy and dissipation rate (`-dE/dt` and enstrophy-based) from `[integrals]` output against the spectral DNS reference |
 | `animate_taylor_green.py` | Taylor-Green vortex animation: Q-criterion isosurfaces on the box mirrored from the computed octant, orbiting camera, and the dissipation rate tracing the reference |
+| `sedov.py` | Exact 3D Sedov-Taylor blast (similarity ODEs): the constant xi0 of R = xi0 (E t^2 / rho0)^(1/5), and a run's shock radius and density profile against it |
+| `animate_sedov.py` | Sedov-Taylor animation: density on the three symmetry planes (mirrored to full disks) with the exact shock sphere, orbiting camera, shock radius and density profile against the exact solution |
