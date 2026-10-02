@@ -44,6 +44,12 @@ void Solver::calc_rhs(StateView solution, StateView rhs, rtype t_stage) {
         case RiemannSolverType::HLLC:
             launch_flux_functor<riemann::HLLC>(rhs);
             break;
+        case RiemannSolverType::ROE:
+            launch_flux_functor<riemann::Roe>(rhs);
+            break;
+        case RiemannSolverType::RHLL:
+            launch_flux_functor<riemann::RHLL>(rhs);
+            break;
     }
 
     if (physics.is_viscous()) {
