@@ -137,7 +137,7 @@ the zone's faces whose centers satisfy the expression.
 | `C_T` | (`TENO`) Fixed TENO cutoff; adaptive (1e-10 to 1e-6) if omitted |
 | `characteristic` | (`TENO`) Select stencils on characteristic variables, default true |
 | `max_condition` | (`TENO`) Stencils grow until the least-squares system's condition estimate is below this, default 1e8 |
-| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options |
+| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options (serial runs only). The file is large in 3D: about 50 KB per cell for order 5, e.g. 13 GB for 64^3 hexahedra |
 | `bound_preserving` | (`TENO`) Scale troubled-cell polynomials to keep density and pressure within the neighbors' range, default false |
 
 ## `[[forces]]`
@@ -156,8 +156,13 @@ Write the force of the fluid on a boundary zone to a CSV file
 
 Write domain integrals to a CSV file (`step, t, kinetic_energy, enstrophy,
 dilatation_squared, pressure_dilatation`): the integrals of `rho |u|^2 / 2`,
-`rho |omega|^2 / 2`, `(div u)^2` and `p div u`, with velocity gradients from
-the same least-squares reconstruction as the viscous fluxes. For decaying
+`rho |omega|^2 / 2`, `(div u)^2` and `p div u`. With TENO the velocity
+gradients are those of the reconstruction polynomials at the cell centroids
+(order-consistent: on the Taylor-Green vortex at 64^3 per octant they match
+spectral derivatives of the same field to about 1%); otherwise they are the
+second-order least-squares gradients of the viscous fluxes, which
+underestimate the enstrophy of under-resolved turbulence (by about 15% in
+that case). For decaying
 turbulence such as the Taylor-Green vortex, the kinetic energy dissipation
 rate is `-dE/dt` and its viscous part `2 mu * enstrophy / rho0`.
 
