@@ -120,6 +120,8 @@ class Solver {
         void init_solution_analytical();
         void init_solution_restart();
         void update_boundary_states(rtype t_eval);
+        void init_sources();
+        void update_source_field(rtype t_eval);
         void allocate_memory();
         void register_data();
         bool done() const;
@@ -169,6 +171,15 @@ class Solver {
         std::vector<StateView> solution_vec;
         std::vector<StateView> rhs_vec;
         RHSFunction rhs_func;
+
+        // Source terms
+        bool has_gravity = false;
+        rtype gravity[N_DIM] = {0.0, 0.0};
+        std::vector<Expression> source_expressions;  // Per conservative variable, empty if none
+        bool source_time_dependent = false;
+        StateView source_field;
+        StateView::host_mirror_type h_source_field;
+        rtype t_source = -1.0;
 
         // Checks
         uint32_t check_interval;
