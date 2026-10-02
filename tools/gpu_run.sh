@@ -7,6 +7,7 @@
 # The run goes through tools/zero_priority.py on the node, which refuses
 # anything but A100 GPUs and kills the job the moment anyone else wants a GPU.
 # Exit code 3 means the job yielded; retry later with the same command.
+# MALLARD_REMOTE_ROOT (default mallard-zero-priority) separates concurrent users.
 set -euo pipefail
 
 host="$1"
@@ -19,7 +20,7 @@ case "$host" in
 esac
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-remote_root="mallard-zero-priority"
+remote_root="${MALLARD_REMOTE_ROOT:-mallard-zero-priority}"
 remote_case="$remote_root/cases/$(basename "$case_dir")"
 
 ssh -o ConnectTimeout=10 "$host" mkdir -p "$remote_root/src" "$remote_case"
