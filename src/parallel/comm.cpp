@@ -201,6 +201,7 @@ template std::vector<std::vector<uint64_t>> alltoallv(const std::vector<std::vec
 template std::vector<int32_t> allgatherv(const std::vector<int32_t> &);
 template std::vector<uint64_t> allgatherv(const std::vector<uint64_t> &);
 template std::vector<double> allgatherv(const std::vector<double> &);
+template std::vector<float> allgatherv(const std::vector<float> &);
 template std::vector<std::vector<double>> alltoallv(const std::vector<std::vector<double>> &);
 template std::vector<std::vector<float>> alltoallv(const std::vector<std::vector<float>> &);
 template Received<uint64_t> exchange(std::vector<std::vector<uint64_t>> &&);

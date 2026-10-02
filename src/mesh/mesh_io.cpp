@@ -111,8 +111,9 @@ void Mesh::init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & 
         }
     };
 
-    // Half faces sorted by node set pair up into faces; faces are numbered in
-    // the order cells first reach them, and ordered as that first cell sees them
+    // Half faces sorted by node set pair up into faces. Faces are numbered in the
+    // order cells reach them, visiting cells by global id, and ordered as the
+    // first cell sees them, so every rank count orients them alike
     std::vector<std::pair<FaceKey, uint32_t>> halves(n_half);
     for (uint32_t c = 0; c < n_cells; c++) {
         for (uint32_t h = cell_face_offsets[c]; h < cell_face_offsets[c + 1]; h++) {
@@ -133,13 +134,13 @@ void Mesh::init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & 
         }
         i = j;
     }
-    std::vector<uint32_t> cell_faces(n_half), face_node_offsets{0}, face_nodes;
+    std::vector<uint32_t> cell_faces(n_half, NO_NODE), face_node_offsets{0}, face_nodes;
     std::vector<std::array<int32_t, 2>> face_cells;
     std::vector<uint8_t> face_shifts;
     std::vector<uint32_t> other_nodes;
-    for (uint32_t c = 0, h = 0; c < n_cells; c++) {
-        for (; h < cell_face_offsets[c + 1]; h++) {
-            if (partner[h] != NO_NODE && partner[h] < h) {
+    for (uint32_t c : cells_by_global_id()) {
+        for (uint32_t h = cell_face_offsets[c]; h < cell_face_offsets[c + 1]; h++) {
+            if (partner[h] != NO_NODE && cell_faces[partner[h]] != NO_NODE) {
                 const uint32_t f = cell_faces[partner[h]];
                 cell_faces[h] = f;
                 if (face_cells[f][0] == int32_t(c)) {

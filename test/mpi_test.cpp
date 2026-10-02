@@ -226,14 +226,14 @@ TEST(MPITest, RestartFilesDoNotDependOnTheRankCount) {
     second.init(parse_toml(input));
     EXPECT_EQ(second.get_step(), 10u);
     second.run();
-    EXPECT_LT(max_rel_diff(gather(second), U_ref), 1e-11);
+    EXPECT_EQ(max_rel_diff(gather(second), U_ref), 0.0);
 
     // The same file read by a single rank
     Solver serial;
     serial.set_distributed(false);
     serial.init(parse_toml(input));
     serial.run();
-    EXPECT_LT(max_rel_diff(gather(serial), U_ref), 1e-11);
+    EXPECT_EQ(max_rel_diff(gather(serial), U_ref), 0.0);
     comm::barrier();
 }
 
