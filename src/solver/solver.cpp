@@ -323,7 +323,8 @@ void Solver::init_run_parameters() {
     if (use_cfl) {
         cfl = find_real(input, "run", "cfl");
     } else {
-        dt = find_real(input, "run", "dt");
+        dt_fixed = find_real(input, "run", "dt");
+        dt = dt_fixed;
     }
     n_steps = toml::find_or<uint64_t>(input, "run", "n_steps", 0);
     t_stop = find_real_or(input, "run", "t_stop", -1.0);
@@ -526,9 +527,7 @@ void Solver::update_primitives() {
 }
 
 void Solver::calc_dt() {
-    if (use_cfl) {
-        dt = cfl * calc_dt_cfl1();
-    }
+    dt = use_cfl ? cfl * calc_dt_cfl1() : dt_fixed;
     // Land exactly on t_stop and on time-based output times
     rtype t_target = (t_stop > 0) ? t_stop : std::numeric_limits<rtype>::infinity();
     for (const auto & writer : data_writers) {
