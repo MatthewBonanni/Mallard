@@ -1659,7 +1659,7 @@ struct TENOFunctor {
         }
     }
 
-    uint32_t stride;  // threads of each troubled pass, which loop over the queue
+    uint32_t stride = 0;  // threads of each troubled pass, which loop over the queue
 
     KOKKOS_INLINE_FUNCTION
     void operator()(TroubledSectorPass, const uint32_t t) const {
@@ -1821,7 +1821,7 @@ void TENO::launch_reconstruction(const Kokkos::DefaultExecutionSpace & exec,
                     scale, basis_mean, stencil_large_size, stencil_large, stencil_large_face, pinv_large,
                     stencil_small_size, stencil_small, stencil_small_face, pinv_small,
                     si_matrix, troubled, troubled_coeffs, troubled_small_coeffs, troubled_cells, n_troubled,
-                    solution, face_solution, cells, 0};
+                    solution, face_solution, cells};
     using Dynamic = Kokkos::Schedule<Kokkos::Dynamic>;
     using Space = Kokkos::DefaultExecutionSpace;
     if (!troubled_pass) {
@@ -1857,7 +1857,7 @@ void TENO::launch_gradients(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                     quadrature_face.points, face_quad_points, face_quad_weights, boundaries,
                     scale, basis_mean, stencil_large_size, stencil_large, stencil_large_face, pinv_large,
                     stencil_small_size, stencil_small, stencil_small_face, pinv_small,
-                    si_matrix, troubled, troubled_coeffs, troubled_cells, n_troubled,
+                    si_matrix, troubled, troubled_coeffs, troubled_small_coeffs, troubled_cells, n_troubled,
                     solution, {}, {}, gradients};
     Kokkos::parallel_for("teno_gradients", Kokkos::RangePolicy<typename Functor::GradientPass>(0, n_cells), functor);
 }
