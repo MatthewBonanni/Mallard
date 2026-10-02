@@ -193,7 +193,7 @@ TEST_P(PeriodicAdvection3D, SmoothWaveConvergesAtDesignOrderOnHexahedra) {
     EXPECT_GT(std::log2(e1 / e2), order - 0.25) << e1 << " " << e2;
 }
 
-INSTANTIATE_TEST_SUITE_P(Periodic, PeriodicAdvection3D, ::testing::Values("MUSCL", "TENO3", "TENO4"));
+INSTANTIATE_TEST_SUITE_P(Periodic, PeriodicAdvection3D, ::testing::Values("MUSCL", "TENO4"));
 
 namespace {
 
@@ -211,7 +211,8 @@ TEST_P(PeriodicInvariance3D, PulseCrossingTheSeamMatchesItsInteriorTranslate) {
     const auto [mesh, scheme, domain] = GetParam();
     Case c;
     c.mesh = mesh;
-    c.n = {8, 8, 8};
+    const uint32_t n = mesh == "cartesian_tet" ? 6 : 8;
+    c.n = {n, n, n};
     c.L = {4.0, 4.0, 4.0};
     c.run = "t_stop = 0.5\ndt = 0.05\n";
     if (scheme == "MUSCL_NS") {

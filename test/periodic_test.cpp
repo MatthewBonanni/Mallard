@@ -299,3 +299,38 @@ INSTANTIATE_TEST_SUITE_P(Periodic, PeriodicInvariance2D,
     ::testing::Combine(::testing::Values("cartesian", "cartesian_tri"),
                        ::testing::Values("TENO", "TENO_contact", "MUSCL_NS"),
                        ::testing::Values("box", "channel")));
+
+TEST(PeriodicSetup2D, TransmissiveImagesAreFoundAcrossTheSeam) {
+    // On a mesh sheared by 45 degrees, the image of a bottom face (inward along
+    // the normal) lies in the neighbor to the left, which for the first column
+    // is across the periodic seam
+    const uint32_t n = 6;
+    const double h = 1.0 / n;
+    std::vector<std::array<rtype, N_DIM>> nodes;
+    for (uint32_t j = 0; j <= n; j++) {
+        for (uint32_t i = 0; i <= n; i++) nodes.push_back({i * h + j * h, j * h});
+    }
+    auto id = [&](uint32_t i, uint32_t j) { return j * (n + 1) + i; };
+    std::vector<std::vector<uint32_t>> cells;
+    std::vector<Mesh::BoundaryFace> faces;
+    for (uint32_t j = 0; j < n; j++) {
+        for (uint32_t i = 0; i < n; i++) cells.push_back({id(i, j), id(i + 1, j), id(i + 1, j + 1), id(i, j + 1)});
+        faces.push_back({{id(0, j), id(0, j + 1)}, "left"});
+        faces.push_back({{id(n, j), id(n, j + 1)}, "right"});
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        faces.push_back({{id(i, 0), id(i + 1, 0)}, "bottom"});
+        faces.push_back({{id(i, n), id(i + 1, n)}, "top"});
+    }
+    Mesh mesh;
+    mesh.init_from_connectivity(nodes, cells, faces, "unassigned", {{"left", "right", {1.0, 0.0}}});
+    const BoundaryData bd = make_uniform_boundaries(mesh, BoundaryType::EXTRAPOLATION);
+    auto h_image_face = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), bd.face_image_face);
+    uint32_t n_boundary = 0;
+    for (uint32_t f = 0; f < mesh.n_faces; f++) {
+        if (mesh.h_cells_of_face(f, 1) >= 0) continue;
+        n_boundary++;
+        EXPECT_GE(h_image_face(f), 0) << "face " << f;
+    }
+    EXPECT_EQ(n_boundary, 2 * n);
+}
