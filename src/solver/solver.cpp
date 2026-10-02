@@ -58,6 +58,7 @@ int Solver::init(const toml::value & input) {
     init_numerics();
     init_run_parameters();
     allocate_memory();
+    init_sources();
     register_data();
     init_output();
     init_solution();
@@ -149,6 +150,56 @@ void Solver::init_boundaries() {
     h_face_state = Kokkos::create_mirror_view(boundary_data.face_state);
     h_face_state_index = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), boundary_data.face_state_index);
     t_boundary_states = -1.0;
+}
+
+void Solver::init_sources() {
+    if (!input.contains("source")) {
+        return;
+    }
+    const toml::value & source = input.at("source");
+    if (source.contains("gravity")) {
+        std::vector<rtype> g = toml::find<std::vector<rtype>>(input, "source", "gravity");
+        if (g.size() != N_DIM) {
+            throw std::runtime_error("source.gravity must have " + std::to_string(N_DIM) + " components.");
+        }
+        has_gravity = true;
+        FOR_I_DIM gravity[i] = g[i];
+        std::cout << "> Gravity: [" << gravity[0] << ", " << gravity[1] << "]" << std::endl;
+    }
+    const bool any_expression = source.contains("rho") || source.contains("rhou") || source.contains("rhoE");
+    if (!any_expression) {
+        return;
+    }
+    std::vector<std::string> texts = {toml::find_or<std::string>(input, "source", "rho", "0"), "0", "0",
+                                      toml::find_or<std::string>(input, "source", "rhoE", "0")};
+    if (source.contains("rhou")) {
+        std::vector<std::string> rhou = toml::find<std::vector<std::string>>(input, "source", "rhou");
+        if (rhou.size() != N_DIM) {
+            throw std::runtime_error("source.rhou must have " + std::to_string(N_DIM) + " components.");
+        }
+        texts[1] = rhou[0];
+        texts[2] = rhou[1];
+    }
+    for (size_t i = 0; i < texts.size(); i++) {
+        source_expressions.emplace_back("source[" + CONSERVATIVE_NAMES[i] + "]", texts[i]);
+    }
+    source_time_dependent = toml::find_or<bool>(input, "source", "time_dependent", false);
+    source_field = StateView("source_field", mesh->n_cells);
+    h_source_field = Kokkos::create_mirror_view(source_field);
+    std::cout << "> Source terms: " << (source_time_dependent ? "time dependent" : "steady") << std::endl;
+}
+
+void Solver::update_source_field(rtype t_eval) {
+    if (source_expressions.empty() || (t_source >= 0.0 && (!source_time_dependent || t_eval == t_source))) {
+        return;
+    }
+    for (uint32_t i_cell = 0; i_cell < mesh->n_cells; i_cell++) {
+        const rtype x = mesh->h_cell_coords(i_cell, 0);
+        const rtype y = mesh->h_cell_coords(i_cell, 1);
+        FOR_I_CONSERVATIVE h_source_field(i_cell, i) = source_expressions[i](x, y, t_eval);
+    }
+    Kokkos::deep_copy(source_field, h_source_field);
+    t_source = t_eval;
 }
 
 void Solver::update_boundary_states(rtype t_eval) {

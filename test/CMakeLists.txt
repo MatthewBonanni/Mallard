@@ -12,6 +12,7 @@ add_executable(MallardTest
     viscous_test.cpp
     restart_test.cpp
     boundary_test.cpp
+    source_test.cpp
 )
 
 target_include_directories(MallardTest PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
