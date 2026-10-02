@@ -380,12 +380,15 @@ void Solver::copy_device_to_host() {
     Kokkos::deep_copy(h_conservatives, conservatives);
     Kokkos::deep_copy(h_primitives, primitives);
     Kokkos::deep_copy(h_cfl_local, cfl_local);
+    if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) {
+        Kokkos::deep_copy(h_teno_sigma, teno->troubled);
+    }
 }
 
 void Solver::register_data() {
     std::cout << "Registering data..." << std::endl;
     data.clear();
-    data.reserve(CONSERVATIVE_NAMES.size() + PRIMITIVE_NAMES.size() + 1);
+    data.reserve(CONSERVATIVE_NAMES.size() + PRIMITIVE_NAMES.size() + 2);
     for (size_t i = 0; i < CONSERVATIVE_NAMES.size(); i++) {
         data.push_back(Data(CONSERVATIVE_NAMES[i], Kokkos::subview(h_conservatives, Kokkos::ALL(), i)));
     }
@@ -393,6 +396,11 @@ void Solver::register_data() {
         data.push_back(Data(PRIMITIVE_NAMES[i], Kokkos::subview(h_primitives, Kokkos::ALL(), i)));
     }
     data.push_back(Data("CFL", h_cfl_local));
+    if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) {
+        // Troubled-cell indicator: TENO stencil selection is active where it exceeds the threshold
+        h_teno_sigma = Kokkos::create_mirror_view(teno->troubled);
+        data.push_back(Data("TENO_SIGMA", h_teno_sigma));
+    }
 }
 
 int Solver::run() {

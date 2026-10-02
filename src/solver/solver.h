@@ -171,6 +171,7 @@ class Solver {
         Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]> viscous_gradients;
         Kokkos::View<rtype *> cfl_local;
         Kokkos::View<rtype *>::host_mirror_type h_cfl_local;
+        Kokkos::View<rtype *>::host_mirror_type h_teno_sigma;
         std::vector<StateView> solution_vec;
         std::vector<StateView> rhs_vec;
         RHSFunction rhs_func;

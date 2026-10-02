@@ -119,5 +119,5 @@ The scheme is not well balanced: hydrostatic states carry small spurious velocit
 | `prefix` | Output path prefix; directories are created as needed |
 | `format` | `vtu` (with a `.pvd` series next to it) or `restart` |
 | `interval` / `time_interval` | Write every this many steps / this much simulation time (exactly one). With `time_interval` the time step is shortened to land on each output time. |
-| `variables` | (`vtu`) Any of `RHO`, `RHOU_X`, `RHOU_Y`, `RHOE`, `U_X`, `U_Y`, `P`, `T`, `H`, `CFL` |
+| `variables` | (`vtu`) Any of `RHO`, `RHOU_X`, `RHOU_Y`, `RHOE`, `U_X`, `U_Y`, `P`, `T`, `H`, `CFL`, and with TENO `TENO_SIGMA` (the troubled-cell indicator; stencil selection is active where it exceeds `troubled_threshold`) |
 | `geometry` | (`vtu`) `all` (default) for the volume, or a boundary zone name to write that zone's faces with the values of their adjacent cells (e.g. wall pressure) |
