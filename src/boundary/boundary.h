@@ -30,6 +30,7 @@ enum class BoundaryType {
     WALL_HEAT_FLUX,
     UPT,
     P_OUT,
+    DIRICHLET,
 };
 
 static const std::unordered_map<std::string, BoundaryType> BOUNDARY_TYPES = {
@@ -39,7 +40,8 @@ static const std::unordered_map<std::string, BoundaryType> BOUNDARY_TYPES = {
     {"wall_isothermal", BoundaryType::WALL_ISOTHERMAL},
     {"wall_heat_flux", BoundaryType::WALL_HEAT_FLUX},
     {"upt", BoundaryType::UPT},
-    {"p_out", BoundaryType::P_OUT}
+    {"p_out", BoundaryType::P_OUT},
+    {"dirichlet", BoundaryType::DIRICHLET}
 };
 
 static const std::unordered_map<BoundaryType, std::string> BOUNDARY_NAMES = {
@@ -49,7 +51,8 @@ static const std::unordered_map<BoundaryType, std::string> BOUNDARY_NAMES = {
     {BoundaryType::WALL_ISOTHERMAL, "wall_isothermal"},
     {BoundaryType::WALL_HEAT_FLUX, "wall_heat_flux"},
     {BoundaryType::UPT, "upt"},
-    {BoundaryType::P_OUT, "p_out"}
+    {BoundaryType::P_OUT, "p_out"},
+    {BoundaryType::DIRICHLET, "dirichlet"}
 };
 
 /**
@@ -62,6 +65,7 @@ static const std::unordered_map<BoundaryType, std::string> BOUNDARY_NAMES = {
  * - P_OUT: data[3] = back pressure
  * - walls: data[1], data[2] = wall velocity; WALL_ISOTHERMAL: data[0] = wall
  *   temperature; WALL_HEAT_FLUX: data[3] = heat flux into the fluid
+ * - DIRICHLET: unused; the exterior state is set per face (BoundaryData::face_state)
  */
 struct BoundaryCondition {
     BoundaryType type = BoundaryType::EXTRAPOLATION;
@@ -113,6 +117,9 @@ struct BoundaryCondition {
             case BoundaryType::UPT:
                 for (uint8_t i = 0; i < N_DIM + 2; i++) W_g[i] = data[i];
                 break;
+            case BoundaryType::DIRICHLET:
+                // Handled per face by BoundaryData
+                break;
             case BoundaryType::P_OUT: {
                 const rtype a = Kokkos::sqrt(gamma * W_i[3] / W_i[0]);
                 if (u_n < a) {
@@ -135,6 +142,8 @@ struct BoundaryData {
     Kokkos::View<int32_t *> face_image_face;  // Face of the image cell matching the translated face, else -1
     Kokkos::View<uint8_t *> face_image_side;  // Side of face_image_face belonging to the image cell
     Kokkos::View<uint8_t *> face_image_flip;  // Whether the image face runs opposite to the boundary face
+    Kokkos::View<int32_t *> face_state_index; // Dirichlet faces: index into face_state, else -1
+    Kokkos::View<rtype *[N_DIM + 2]> face_state; // Exterior W of Dirichlet faces
     Kokkos::View<BoundaryCondition *> bcs;
     rtype gamma = 1.4;
     rtype R = 1.0;
@@ -177,6 +186,11 @@ struct BoundaryData {
      */
     KOKKOS_INLINE_FUNCTION
     void ghost_W(const uint32_t i_face, const rtype * W_i, const rtype * n, rtype * W_g) const {
+        const int32_t k = face_state_index(i_face);
+        if (k >= 0) {
+            for (uint8_t i = 0; i < N_DIM + 2; i++) W_g[i] = face_state(k, i);
+            return;
+        }
         bcs(face_bc(i_face)).ghost_W(W_i, n, gamma, R, viscous, W_g);
     }
 };
