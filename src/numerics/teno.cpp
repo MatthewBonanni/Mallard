@@ -702,38 +702,28 @@ struct TENOFunctor {
         conservatives(i_cell, U0);
         FOR_I_CONSERVATIVE W0[i] = W(i_cell, i);
 
-        // Troubled-cell indicator: variance of relative density jumps over the large stencil
         const uint16_t ns = stencil_large_size(i_cell);
-        auto entry_rho = [&](const uint16_t s) {
-            rtype W_e[N_CONSERVATIVE];
-            entry_W(stencil_large(i_cell, s), stencil_large_face(i_cell, s), W_e);
-            return W_e[0];
-        };
-        rtype g_mean = 0.0;
-        for (uint16_t s = 0; s < ns; s++) {
-            g_mean += Kokkos::fabs(entry_rho(s) - W0[0]) / W0[0];
-        }
-        g_mean /= ns;
-        rtype sigma = 0.0;
-        for (uint16_t s = 0; s < ns; s++) {
-            const rtype g = Kokkos::fabs(entry_rho(s) - W0[0]) / W0[0];
-            sigma += (g - g_mean) * (g - g_mean);
-        }
-        sigma /= ns;
-        sigma_out(i_cell) = sigma;
-        const bool is_troubled = sigma >= sigma_threshold;
-        const rtype cutoff = (C_T > 0.0) ? C_T : teno::adaptive_CT(sigma, sigma_threshold, sigma_upper);
-
-        // Large-stencil coefficients (conservative variables)
+        // One pass over the central stencil: large-stencil coefficients (conservative
+        // variables) and the troubled-cell measure, the variance of the relative
+        // density jumps (Welford's update)
         rtype aK[teno::MAX_NK][N_CONSERVATIVE] = {};
+        rtype g_mean = 0.0, g_m2 = 0.0;
         for (uint16_t s = 0; s < ns; s++) {
             rtype U[N_CONSERVATIVE];
             entry_conservatives(stencil_large(i_cell, s), stencil_large_face(i_cell, s), U);
+            const rtype g = Kokkos::fabs(U[0] - W0[0]) / W0[0];
+            const rtype delta = g - g_mean;
+            g_mean += delta / (s + 1);
+            g_m2 += delta * (g - g_mean);
             for (uint8_t l = 0; l < nk; l++) {
                 const rtype P = pinv_large(i_cell, l, s);
                 FOR_I_CONSERVATIVE aK[l][i] += P * (U[i] - U0[i]);
             }
         }
+        const rtype sigma = g_m2 / ns;
+        sigma_out(i_cell) = sigma;
+        const bool is_troubled = sigma >= sigma_threshold;
+        const rtype cutoff = (C_T > 0.0) ? C_T : teno::adaptive_CT(sigma, sigma_threshold, sigma_upper);
 
         // Small-stencil coefficients, only needed in troubled cells
         rtype aS[teno::MAX_FACES][teno::NK_SMALL][N_CONSERVATIVE] = {};
