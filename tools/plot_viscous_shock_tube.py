@@ -117,7 +117,7 @@ def main():
     ax1.grid(alpha=0.3)
     ax1.legend(fontsize=8)
     fig.tight_layout()
-    fig.savefig(args.output, dpi=150)
+    fig.savefig(args.output, dpi=300)
     print("wrote", args.output)
 
 
