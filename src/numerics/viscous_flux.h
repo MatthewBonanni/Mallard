@@ -122,8 +122,6 @@ struct ViscousFluxFunctor {
         FOR_I_DIM n_vec[i] = normals(i_face, i);
         unit<N_DIM>(n_vec, n);
 
-        rtype q0[NQ], g0[NQ][N_DIM];
-        cell_state(c0, q0, g0);
         rtype q_f[NQ], g_f[NQ][N_DIM];
         bool heat_flux_given = false;
         rtype heat_flux = 0.0;   // Into the domain
@@ -132,6 +130,8 @@ struct ViscousFluxFunctor {
         if (c1 >= 0) {
             interior_face(i_face, q_f, g_f);
         } else {
+            rtype q0[NQ], g0[NQ][N_DIM];
+            cell_state(c0, q0, g0);
             const BoundaryCondition & bc = boundaries.bcs(boundaries.face_bc(i_face));
             for (uint8_t k = 0; k < NQ; k++) {
                 q_f[k] = q0[k];
