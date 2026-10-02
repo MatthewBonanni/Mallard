@@ -19,6 +19,7 @@ class FakeNode:
         self.processes = []
         self.status = [{"gpu_id": i, "status": "AVAILABLE"} for i in range(len(self._gpus))]
         self.queue = {"entries": [], "total_waiting": 0}
+        self.supports_note = True
 
     def gpus(self):
         return self._gpus
@@ -32,6 +33,9 @@ class FakeNode:
     def chg_queue(self):
         return self.queue
 
+    def chg_supports_note(self):
+        return self.supports_note
+
 
 def local_popen(cmd, env=None, start_new_session=False):
     """Strip the `chg run ... --` prefix and run the real command."""
@@ -40,6 +44,24 @@ def local_popen(cmd, env=None, start_new_session=False):
 
 
 class ZeroPriorityTest(unittest.TestCase):
+    def test_reservation_note_invites_others_to_kill_the_job(self):
+        for supported in (True, False):
+            node = FakeNode()
+            node.supports_note = supported
+            cmds = []
+
+            def popen(cmd, env=None, start_new_session=False):
+                cmds.append(cmd)
+                return local_popen(cmd, env, start_new_session)
+
+            with mock.patch.object(zp, "release"):
+                zp.run(["--poll", "0", "--", "true"], node=node, popen=popen, sleep=lambda _: None, me="me")
+            chg = cmds[0][:cmds[0].index("--")]
+            if supported:
+                self.assertIn("gpukill", chg[chg.index("--note") + 1])
+            else:
+                self.assertNotIn("--note", chg)
+
     def run_zp(self, node, command, on_poll=None):
         polls = []
 
