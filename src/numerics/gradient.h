@@ -57,11 +57,12 @@ struct LSQGradientFunctor {
             boundaries.ghost_W(i_face, W_i, n, W_j);
             const BoundaryCondition & bc = boundaries.bcs(boundaries.face_bc(i_face));
             if (boundaries.viscous && bc.type == BoundaryType::WALL_HEAT_FLUX) {
-                // Ghost temperature consistent with the prescribed heat flux into the fluid
+                // Ghost temperature consistent with the prescribed heat flux into the
+                // fluid: q = kappa dT/dn with n pointing out of the domain
                 const rtype R = boundaries.R;
                 const rtype T_i = W_i[3] / (W_i[0] * R);
                 const rtype kappa = boundaries.gas.conductivity(boundaries.gas.viscosity(T_i));
-                const rtype T_g = Kokkos::fmax(T_i - 2.0 * d * bc.data[3] / kappa, 0.1 * T_i);
+                const rtype T_g = Kokkos::fmax(T_i + 2.0 * d * bc.data[3] / kappa, 0.1 * T_i);
                 W_j[0] = W_i[3] / (R * T_g);
             }
         }

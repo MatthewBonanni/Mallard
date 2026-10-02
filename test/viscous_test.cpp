@@ -133,7 +133,7 @@ TEST_P(ViscousMesh, HeatFluxWallSetsTemperatureGradient) {
     auto m = solver->get_mesh();
     for (uint32_t i = 0; i < m->n_cells; i++) {
         const double y = m->h_cell_coords(i, 1);
-        EXPECT_NEAR(solver->h_primitives(i, 3), 1.0 + 0.2 * (1.0 - y) / kappa, 5e-3);
+        EXPECT_NEAR(solver->h_primitives(i, 3), 1.0 + 0.2 * (1.0 - y) / kappa, 5e-4);
     }
 }
 
