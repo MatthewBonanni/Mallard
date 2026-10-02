@@ -92,7 +92,7 @@ Kokkos::View<rtype *[N_CONSERVATIVE]>::host_mirror_type cell_averages_3d(const M
                         for (int d = 0; d < 3; d++) p[d] = t[0][d] + u * e[0][d] + v * e[1][d] + w * e[2][d];
                         double val[N_CONSERVATIVE];
                         f(p[0], p[1], p[2], val);
-                        FOR_I_CONSERVATIVE sum[i] += wt * val[i];
+                        for (int q = 0; q < N_CONSERVATIVE; q++) sum[q] += wt * val[q];
                         vol += wt;
                     }
                 }
@@ -154,7 +154,7 @@ Kokkos::View<rtype *[N_CONSERVATIVE]>::host_mirror_type cell_averages(const Mesh
                     const double w = gw[i] * gw[j] * (1.0 - g[i]) * det;
                     double v[N_CONSERVATIVE];
                     f(x0 + s * ax + t * bx, y0 + s * ay + t * by, v);
-                    FOR_I_CONSERVATIVE sum[i] += w * v[i];
+                    for (int q = 0; q < N_CONSERVATIVE; q++) sum[q] += w * v[q];
                     area += w;
                 }
             }

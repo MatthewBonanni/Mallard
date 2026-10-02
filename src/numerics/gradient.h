@@ -101,7 +101,7 @@ struct LSQGradientFunctor {
         const int32_t c0 = cells_of_face(i_face, 0);
         const int32_t c1 = cells_of_face(i_face, 1);
         if (c1 >= 0) {
-            const int32_t j = (c0 == (int32_t)i_cell) ? c1 : c0;
+            const int32_t j = (c0 == static_cast<int32_t>(i_cell)) ? c1 : c0;
             FOR_I_DIM dx[i] = cell_coords(j, i) - cell_coords(i_cell, i);
             FOR_I_CONSERVATIVE W_j[i] = W(j, i);
         } else {

@@ -40,12 +40,12 @@ void FaceReconstruction::print() const {
     std::cout << LOG_SEPARATOR << std::endl;
 }
 
-void FaceReconstruction::set_mesh(std::shared_ptr<Mesh> mesh) {
-    this->mesh = mesh;
+void FaceReconstruction::set_mesh(std::shared_ptr<Mesh> mesh_in) {
+    this->mesh = mesh_in;
 }
 
-void FaceReconstruction::set_boundaries(const BoundaryData & boundaries) {
-    this->boundaries = boundaries;
+void FaceReconstruction::set_boundaries(const BoundaryData & boundaries_in) {
+    this->boundaries = boundaries_in;
 }
 
 void FaceReconstruction::init_face_quadrature_3d(uint8_t degree) {
@@ -169,16 +169,16 @@ struct FirstOrderFunctor {
     public:
         /**
          * @brief Construct a new FirstOrderFunctor object
-         * @param cells_of_face Cells of face.
-         * @param face_solution Face solution.
-         * @param solution Cell solution.
+         * @param cells_of_face_in Cells of face.
+         * @param face_solution_in Face solution.
+         * @param solution_in Cell solution.
          */
-        FirstOrderFunctor(Kokkos::View<int32_t *[2]> cells_of_face,
-                          Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution,
-                          Kokkos::View<rtype *[N_CONSERVATIVE]> solution) :
-                              cells_of_face(cells_of_face),
-                              face_solution(face_solution),
-                              solution(solution) {}
+        FirstOrderFunctor(Kokkos::View<int32_t *[2]> cells_of_face_in,
+                          Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution_in,
+                          Kokkos::View<rtype *[N_CONSERVATIVE]> solution_in) :
+                              cells_of_face(cells_of_face_in),
+                              face_solution(face_solution_in),
+                              solution(solution_in) {}
 
         /**
          * @brief Overloaded operator for first order face reconstruction.
