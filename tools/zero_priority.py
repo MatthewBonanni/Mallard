@@ -32,6 +32,7 @@ REQUIRED_COMPUTE_CAP = "8.0"
 REQUIRED_NAME = "A100"
 EXIT_REFUSED = 2
 EXIT_YIELDED = 3
+RESERVATION_NOTE = "no priority; kill this job with gpukill if you need to run anything"
 
 
 def sh(cmd):
@@ -70,6 +71,9 @@ class Node:
             return json.loads(sh("chg status --json") or "[]")
         except json.JSONDecodeError:
             return None
+
+    def chg_supports_note(self):
+        return "--note" in sh("chg run --help 2>&1")
 
     def chg_queue(self):
         try:
@@ -179,7 +183,12 @@ def run(argv, node=None, popen=subprocess.Popen, sleep=time.sleep, me=None):
     log(f"starting on GPU {gpu}: {' '.join(command)}")
     env = dict(os.environ, CUDA_VISIBLE_DEVICES=str(gpu))
     # chg holds the reservation for exactly the lifetime of the child
-    proc = popen(["chg", "run", "--gpu-ids", str(gpu), "--"] + command, env=env, start_new_session=True)
+    chg = ["chg", "run", "--gpu-ids", str(gpu)]
+    if node.chg_supports_note():
+        chg += ["--note", RESERVATION_NOTE]
+    else:
+        log("this chg has no --note; the reservation carries no note")
+    proc = popen(chg + ["--"] + command, env=env, start_new_session=True)
     while True:
         rc = proc.poll()
         if rc is not None:
