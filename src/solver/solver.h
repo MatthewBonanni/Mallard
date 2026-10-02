@@ -26,6 +26,16 @@
 #include "time_integrator.h"
 #include "physics.h"
 #include "data_writer.h"
+#include "expression.h"
+
+/**
+ * @brief Faces with a Dirichlet condition and the expressions of x, y, t
+ *        for their exterior state W = [rho, u_x, u_y, p].
+ */
+struct DirichletBoundary {
+    std::vector<uint32_t> faces;
+    std::vector<Expression> W;
+};
 
 class Solver {
     public:
@@ -58,9 +68,9 @@ class Solver {
         void take_step();
 
         /**
-         * @brief Compute dU/dt for the given conservative state.
+         * @brief Compute dU/dt for the given conservative state at time t.
          */
-        void calc_rhs(StateView solution, StateView rhs);
+        void calc_rhs(StateView solution, StateView rhs, rtype t);
 
         /**
          * @brief Compute the stable time step for the current solution.
@@ -109,6 +119,7 @@ class Solver {
         void init_solution_constant();
         void init_solution_analytical();
         void init_solution_restart();
+        void update_boundary_states(rtype t_eval);
         void allocate_memory();
         void register_data();
         bool done() const;
@@ -141,6 +152,10 @@ class Solver {
         std::shared_ptr<Mesh> mesh;
         Euler physics;
         BoundaryData boundary_data;
+        std::vector<DirichletBoundary> dirichlet_boundaries;
+        Kokkos::View<rtype *[N_DIM + 2]>::host_mirror_type h_face_state;
+        Kokkos::View<int32_t *>::host_mirror_type h_face_state_index;
+        rtype t_boundary_states;
         std::unique_ptr<FaceReconstruction> face_reconstruction;
         RiemannSolverType riemann_solver_type;
         std::unique_ptr<TimeIntegrator> time_integrator;

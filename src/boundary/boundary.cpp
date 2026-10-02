@@ -101,12 +101,15 @@ BoundaryData make_boundary_data(const Mesh & mesh,
     data.face_image_face = Kokkos::View<int32_t *>("face_image_face", mesh.n_faces);
     data.face_image_side = Kokkos::View<uint8_t *>("face_image_side", mesh.n_faces);
     data.face_image_flip = Kokkos::View<uint8_t *>("face_image_flip", mesh.n_faces);
+    data.face_state_index = Kokkos::View<int32_t *>("face_state_index", mesh.n_faces);
     data.bcs = Kokkos::View<BoundaryCondition *>("bcs", h_bcs_vec.size());
     auto h_face_bc = Kokkos::create_mirror_view(data.face_bc);
     auto h_face_image = Kokkos::create_mirror_view(data.face_image);
     auto h_face_image_face = Kokkos::create_mirror_view(data.face_image_face);
     auto h_face_image_side = Kokkos::create_mirror_view(data.face_image_side);
     auto h_face_image_flip = Kokkos::create_mirror_view(data.face_image_flip);
+    auto h_face_state_index = Kokkos::create_mirror_view(data.face_state_index);
+    int32_t n_dirichlet = 0;
     auto h_bcs = Kokkos::create_mirror_view(data.bcs);
     for (size_t i = 0; i < h_bcs_vec.size(); i++) h_bcs(i) = h_bcs_vec[i];
 
@@ -124,6 +127,10 @@ BoundaryData make_boundary_data(const Mesh & mesh,
         h_face_image_face(f) = -1;
         h_face_image_side(f) = 0;
         h_face_image_flip(f) = 0;
+        h_face_state_index(f) = -1;
+        if (h_face_bc_vec[f] >= 0 && h_bcs_vec[h_face_bc_vec[f]].type == BoundaryType::DIRICHLET) {
+            h_face_state_index(f) = n_dirichlet++;
+        }
         if (h_face_bc_vec[f] < 0 || h_bcs_vec[h_face_bc_vec[f]].type != BoundaryType::EXTRAPOLATION) continue;
         // Image of the exterior neighbor: translate inward by most of the boundary cell's depth
         const uint32_t c = mesh.h_cells_of_face(f, 0);
@@ -175,6 +182,8 @@ BoundaryData make_boundary_data(const Mesh & mesh,
     Kokkos::deep_copy(data.face_image_face, h_face_image_face);
     Kokkos::deep_copy(data.face_image_side, h_face_image_side);
     Kokkos::deep_copy(data.face_image_flip, h_face_image_flip);
+    Kokkos::deep_copy(data.face_state_index, h_face_state_index);
+    data.face_state = Kokkos::View<rtype *[N_DIM + 2]>("face_state", n_dirichlet);
     Kokkos::deep_copy(data.bcs, h_bcs);
     return data;
 }
