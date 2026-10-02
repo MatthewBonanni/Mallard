@@ -97,12 +97,14 @@ def others_present(node, me):
     if status is None:
         return "chg status unavailable"
     for entry in status:
-        user = entry.get("user") or entry.get("actual_user") or ""
-        state = str(entry.get("type", "")).upper()
-        if state not in ("", "AVAILABLE") and user and user != me:
-            return f"GPU {entry.get('gpu_id')} {state} by {user}"
-        if state in ("UNRESERVED", "UNRESERVED_USAGE", "IN_USE_WITHOUT_RESERVATION"):
-            return f"GPU {entry.get('gpu_id')} used without reservation"
+        # chg status --json: "status" is AVAILABLE, IN_USE, UNRESERVED or ERROR;
+        # "type" is the reservation kind (run, manual)
+        user = entry.get("user") or ""
+        state = str(entry.get("status", "")).upper()
+        if state == "IN_USE" and user != me:
+            return f"GPU {entry.get('gpu_id')} reserved by {user or 'someone'}"
+        if state == "UNRESERVED":
+            return f"GPU {entry.get('gpu_id')} used without reservation by {entry.get('unreserved_users')}"
     queue = node.chg_queue()
     if queue is None:
         return "chg queue unavailable"
@@ -114,7 +116,7 @@ def others_present(node, me):
 
 def pick_gpu(node, me):
     status = node.chg_status() or []
-    free = sorted(e["gpu_id"] for e in status if str(e.get("type", "")).upper() == "AVAILABLE")
+    free = sorted(e["gpu_id"] for e in status if str(e.get("status", "")).upper() == "AVAILABLE")
     return free[0] if free else None
 
 

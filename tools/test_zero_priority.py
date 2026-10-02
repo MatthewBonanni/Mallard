@@ -17,7 +17,7 @@ class FakeNode:
     def __init__(self, gpus=None):
         self._gpus = gpus or [dict(A100, index=i) for i in range(4)]
         self.processes = []
-        self.status = [{"gpu_id": i, "type": "AVAILABLE"} for i in range(len(self._gpus))]
+        self.status = [{"gpu_id": i, "status": "AVAILABLE"} for i in range(len(self._gpus))]
         self.queue = {"entries": [], "total_waiting": 0}
 
     def gpus(self):
@@ -66,9 +66,10 @@ class ZeroPriorityTest(unittest.TestCase):
     def test_refuses_when_node_busy(self):
         busy = [
             lambda n: n.processes.append((123, "alice")),
-            lambda n: n.status.__setitem__(1, {"gpu_id": 1, "type": "RUN", "user": "alice"}),
-            lambda n: n.status.__setitem__(2, {"gpu_id": 2, "type": "MANUAL", "user": "bob"}),
+            lambda n: n.status.__setitem__(1, {"gpu_id": 1, "status": "IN_USE", "type": "run", "user": "alice"}),
+            lambda n: n.status.__setitem__(2, {"gpu_id": 2, "status": "IN_USE", "type": "manual", "user": "bob"}),
             lambda n: n.queue["entries"].append({"user": "carol", "actual_user": "carol"}),
+            lambda n: n.status.__setitem__(3, {"gpu_id": 3, "status": "UNRESERVED", "unreserved_users": ["dave"]}),
         ]
         for make_busy in busy:
             node = FakeNode()
@@ -84,7 +85,7 @@ class ZeroPriorityTest(unittest.TestCase):
     def test_ignores_own_processes_and_reservation(self):
         node = FakeNode()
         node.processes.append((99, "me"))
-        node.status[0] = {"gpu_id": 0, "type": "RUN", "user": "me"}
+        node.status[0] = {"gpu_id": 0, "status": "IN_USE", "type": "run", "user": "me"}
         rc, _ = self.run_zp(node, ["true"])
         self.assertEqual(rc, 0)
 
@@ -110,7 +111,7 @@ class ZeroPriorityTest(unittest.TestCase):
         self.yield_case(lambda n: n.processes.append((4242, "alice")))
 
     def test_yields_to_other_users_reservation(self):
-        self.yield_case(lambda n: n.status.__setitem__(3, {"gpu_id": 3, "type": "RUN", "user": "alice"}))
+        self.yield_case(lambda n: n.status.__setitem__(3, {"gpu_id": 3, "status": "IN_USE", "type": "run", "user": "alice"}))
 
     def test_yields_to_queued_request(self):
         self.yield_case(lambda n: n.queue.update(entries=[{"user": "bob", "actual_user": "bob"}], total_waiting=1))
