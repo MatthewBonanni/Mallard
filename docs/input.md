@@ -86,7 +86,7 @@ the zone's faces whose centers satisfy the expression.
 | `limiter` | (`MUSCL`) `venkatakrishnan` (default), `barth_jespersen` or `none` |
 | `venkatakrishnan_K` | (`MUSCL`) Venkatakrishnan threshold constant, default 5 |
 | `order` | (`TENO`) Order of accuracy, 2 to 6, default 5 |
-| `stencil_factor` | (`TENO`) Large-stencil size as a multiple of the number of polynomial coefficients, default 2 |
+| `stencil_factor` | (`TENO`) Large-stencil size as a multiple of the number of polynomial coefficients, default 2. Smaller values (e.g. 1.5) are markedly less dissipative for fine smooth structures (Shu-Osher entropy waves: 50% more amplitude at 200 cells) but less robust at discontinuities. |
 | `small_stencil_size` | (`TENO`) Cells per sector stencil, default 10 |
 | `troubled_threshold` | (`TENO`) Troubled-cell threshold on the density-jump variance, default 1e-3 |
 | `C_T` | (`TENO`) Fixed TENO cutoff; adaptive (1e-10 to 1e-6) if omitted |
