@@ -37,7 +37,8 @@ std::string restart_input(const std::string & dir, const std::string & init, uin
       << "[output]\ncheck_interval = 1000000\n"
       << "[[write_data]]\nprefix = \"" << dir << "/restart\"\nformat = \"restart\"\ninterval = 20\n"
       << "[[write_data]]\nprefix = \"" << dir << "/flow\"\nformat = \"vtu\"\ntime_interval = 0.002\n"
-      << "variables = [\"RHO\"]\n";
+      << "variables = [\"RHO\"]\n"
+      << "[[forces]]\nzone = \"bottom\"\ninterval = 5\nfile = \"" << dir << "/forces.csv\"\n";
     return s.str();
 }
 
@@ -80,6 +81,15 @@ TEST(RestartTest, RestartedRunMatchesUninterruptedRunExactly) {
         return n;
     };
     EXPECT_EQ(count_entries(dir + "/b/flow.pvd"), count_entries(dir + "/a/flow.pvd"));
+
+    // The force history is appended to, not overwritten
+    auto read_all = [](const std::string & file) {
+        std::ifstream in(file);
+        std::stringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    };
+    EXPECT_EQ(read_all(dir + "/b/forces.csv"), read_all(dir + "/a/forces.csv"));
     std::filesystem::remove_all(dir);
 }
 
@@ -94,4 +104,11 @@ TEST(RestartTest, RejectsMismatchedMesh) {
     Solver second;
     EXPECT_THROW(second.init(parse_toml(input)), std::runtime_error);
     std::filesystem::remove_all(dir);
+}
+
+TEST(RestartTest, RejectsZeroForceInterval) {
+    std::string input = restart_input("unused", BLAST, 1);
+    input.replace(input.find("interval = 5"), 12, "interval = 0");
+    Solver solver;
+    EXPECT_THROW(solver.init(parse_toml(input)), std::runtime_error);
 }

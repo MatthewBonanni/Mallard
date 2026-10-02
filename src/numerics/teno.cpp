@@ -665,7 +665,9 @@ struct TENOFunctor {
             unit<N_DIM>(n_vec, n);
             rtype W_c[N_CONSERVATIVE];
             FOR_I_CONSERVATIVE W_c[i] = W_e[i];
-            boundaries.ghost_W(f, W_c, n, W_e);
+            rtype d = 0.0;
+            FOR_I_DIM d += (face_coords(f, i) - cell_coords(c, i)) * n[i];
+            boundaries.ghost_W_at(f, W_c, n, 2.0 * Kokkos::fabs(d), W_e);
         }
     }
 
@@ -947,7 +949,7 @@ void TENO::calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
 
 namespace {
 
-constexpr char TENO_CACHE_MAGIC[16] = "MALLARD-TENO-1";
+constexpr char TENO_CACHE_MAGIC[16] = "MALLARD-TENO-2";
 
 struct Fnv1a {
     uint64_t h = 1469598103934665603ULL;
@@ -965,7 +967,7 @@ struct Fnv1a {
 template <typename View>
 void write_view(std::ofstream & out, const View & view) {
     auto h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view);
-    for (int r = 0; r < 4; r++) {
+    for (unsigned r = 0; r < View::rank(); r++) {
         const uint64_t e = view.extent(r);
         out.write(reinterpret_cast<const char *>(&e), sizeof(e));
     }
@@ -974,10 +976,13 @@ void write_view(std::ofstream & out, const View & view) {
 
 template <typename View>
 bool read_view(std::ifstream & in, View & view, const std::string & label) {
-    uint64_t e[4];
-    for (int r = 0; r < 4; r++) in.read(reinterpret_cast<char *>(&e[r]), sizeof(e[r]));
+    uint64_t e[4] = {0, 0, 0, 0};
+    for (unsigned r = 0; r < View::rank(); r++) in.read(reinterpret_cast<char *>(&e[r]), sizeof(e[r]));
     if (!in.good()) return false;
-    view = View(label, e[0], e[1], e[2], e[3]);
+    if constexpr (View::rank() == 1) view = View(label, e[0]);
+    else if constexpr (View::rank() == 2) view = View(label, e[0], e[1]);
+    else if constexpr (View::rank() == 3) view = View(label, e[0], e[1], e[2]);
+    else view = View(label, e[0], e[1], e[2], e[3]);
     auto h = Kokkos::create_mirror_view(view);
     in.read(reinterpret_cast<char *>(h.data()), h.span() * sizeof(typename View::value_type));
     if (!in.good()) return false;
