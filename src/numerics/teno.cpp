@@ -668,6 +668,11 @@ struct TENOFunctor {
             rtype d = 0.0;
             FOR_I_DIM d += (face_coords(f, i) - cell_coords(c, i)) * n[i];
             boundaries.ghost_W_at(f, W_c, n, 2.0 * Kokkos::fabs(d), W_e);
+            const BoundaryCondition & bc = boundaries.bcs(boundaries.face_bc(f));
+            if (bc.type == BoundaryType::FARFIELD) {
+                // The characteristic state holds at the face; outside lies the free stream
+                FOR_I_CONSERVATIVE W_e[i] = bc.data[i];
+            }
         }
     }
 
