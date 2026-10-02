@@ -11,6 +11,8 @@
 
 #include "solver.h"
 
+#include "input.h"
+
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -164,7 +166,7 @@ void Solver::init_sources() {
     }
     const toml::value & source = input.at("source");
     if (source.contains("gravity")) {
-        std::vector<rtype> g = toml::find<std::vector<rtype>>(input, "source", "gravity");
+        std::vector<rtype> g = find_real_vector(input, "source", "gravity");
         if (g.size() != N_DIM) {
             throw std::runtime_error("source.gravity must have " + std::to_string(N_DIM) + " components.");
         }
@@ -319,13 +321,13 @@ void Solver::init_run_parameters() {
     }
     use_cfl = run.contains("cfl");
     if (use_cfl) {
-        cfl = toml::find<rtype>(input, "run", "cfl");
+        cfl = find_real(input, "run", "cfl");
     } else {
-        dt = toml::find<rtype>(input, "run", "dt");
+        dt = find_real(input, "run", "dt");
     }
     n_steps = toml::find_or<uint64_t>(input, "run", "n_steps", 0);
-    t_stop = toml::find_or<rtype>(input, "run", "t_stop", -1.0);
-    t_wall_stop = toml::find_or<rtype>(input, "run", "t_wall_stop", -1.0);
+    t_stop = find_real_or(input, "run", "t_stop", -1.0);
+    t_wall_stop = find_real_or(input, "run", "t_wall_stop", -1.0);
 }
 
 void Solver::init_output() {
