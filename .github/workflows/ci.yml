@@ -32,6 +32,9 @@ jobs:
           - name: mpi-3d
             flags: -DKokkos_ENABLE_SERIAL=ON -DMallard_ENABLE_MPI=ON -DMallard_DIM=3 -DMallard_ENABLE_HDF5=ON
             mpi: true
+          - name: clang
+            flags: -DKokkos_ENABLE_SERIAL=ON -DMallard_ENABLE_HDF5=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+            hdf5: true
     name: ${{ matrix.backend.name }}
     steps:
       - uses: actions/checkout@v4
@@ -59,7 +62,7 @@ jobs:
         run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-          -DUSE_SYSTEM_KOKKOS=OFF ${{ matrix.backend.flags }}
+          -DUSE_SYSTEM_KOKKOS=OFF -DMallard_WARNINGS_AS_ERRORS=ON ${{ matrix.backend.flags }}
       - name: Build
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
