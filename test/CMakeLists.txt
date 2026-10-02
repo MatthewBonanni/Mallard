@@ -26,9 +26,11 @@ else()
     list(APPEND MALLARD_TEST_SOURCES
     physics3d_test.cpp
     mesh3d_test.cpp
+    teno3d_test.cpp
     riemann3d_test.cpp
     boundary3d_test.cpp
     gradient3d_test.cpp
+    solver3d_test.cpp
     io3d_test.cpp
     )
 endif()
