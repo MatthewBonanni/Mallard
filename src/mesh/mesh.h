@@ -335,6 +335,15 @@ class Mesh {
          */
         void init_wedge(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly);
 
+        /**
+         * @brief Global id of local cell i_cell (i_cell itself unless distributed).
+         *        Connectivity is ordered by global ids, so that every rank count
+         *        builds bitwise identical faces and stencils.
+         */
+        uint64_t h_global_cell(uint32_t i_cell) const {
+            return h_global_cell_id.empty() ? i_cell : h_global_cell_id[i_cell];
+        }
+
         uint32_t n_cells, n_nodes, n_faces;
         // Cells [0, n_owned()) are owned by this rank; the rest are halo cells
         uint32_t n_owned_cells = 0;
@@ -379,15 +388,24 @@ class Mesh {
         Kokkos::View<int32_t *[2]>::host_mirror_type h_cells_of_face;
     protected:
     private:
-        void init_from_connectivity_3d(const std::vector<std::array<rtype, N_DIM>> & nodes,
-                                       const std::vector<std::vector<uint32_t>> & cells,
-                                       const std::vector<BoundaryFace> & boundary_faces,
-                                       const std::string & unlisted_zone);
+        void init_box(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, bool triangles, bool wedge);
+        // Local cells in increasing global id: the first cell to visit a face becomes its cell 0
+        std::vector<uint32_t> cells_by_global_id() const;
+        /**
+         * @brief Positively oriented copy of 3D cells (Gmsh/VTK convention), as
+         *        CSR offsets and node lists.
+         */
+        static void orient_cells_3d(const std::vector<std::array<rtype, N_DIM>> & nodes,
+                                    const std::vector<std::vector<uint32_t>> & cells,
+                                    std::vector<uint32_t> & offsets, std::vector<uint32_t> & cell_nodes);
 
         void allocate_and_fill(const std::vector<std::array<rtype, N_DIM>> & nodes,
-                               const std::vector<std::vector<uint32_t>> & cell_nodes,
-                               const std::vector<std::vector<uint32_t>> & cell_faces,
-                               const std::vector<std::vector<uint32_t>> & face_node_lists,
+                               const std::vector<uint32_t> & cell_node_offsets,
+                               const std::vector<uint32_t> & cell_nodes,
+                               const std::vector<uint32_t> & cell_face_offsets,
+                               const std::vector<uint32_t> & cell_faces,
+                               const std::vector<uint32_t> & face_node_offsets,
+                               const std::vector<uint32_t> & face_nodes,
                                const std::vector<std::array<int32_t, 2>> & face_cells,
                                const std::vector<uint32_t> & interior,
                                const std::map<std::string, std::vector<uint32_t>> & zone_faces);

@@ -23,6 +23,7 @@
 #include "quadrature.h"
 #include "boundary.h"
 #include "gradient.h"
+#include "log.h"
 #include "teno.h"
 
 enum class FaceReconstructionType {
@@ -64,9 +65,9 @@ class FaceReconstruction {
         virtual void init(const toml::value & input) = 0;
 
         /**
-         * @brief Print the face reconstruction.
+         * @brief Display lines for the run log.
          */
-        virtual void print() const;
+        virtual logging::Items summary() const;
 
         /**
          * @brief Set the mesh.
@@ -224,7 +225,7 @@ class MUSCL : public FaceReconstruction {
         MUSCL();
         ~MUSCL();
         void init(const toml::value & input) override;
-        void print() const override;
+        logging::Items summary() const override;
         uint8_t n_face_quadrature_points() const override;
         void calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                               Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution) override;
@@ -250,7 +251,7 @@ class TENO : public FaceReconstruction {
         TENO();
         ~TENO();
         void init(const toml::value & input) override;
-        void print() const override;
+        logging::Items summary() const override;
         uint8_t n_face_quadrature_points() const override;
         void calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                               Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution) override;
@@ -313,8 +314,12 @@ class TENO : public FaceReconstruction {
         void compute_stencils_and_matrices();
         void compute_stencils_and_matrices_3d();
         uint64_t cache_key() const;
-        void save_cache(const std::string & filename) const;
+        bool save_cache(const std::string & filename) const;
         bool load_cache(const std::string & filename);
+
+        uint32_t largest_stencil = 0;        // Largest central stencil on any rank (cells)
+        int64_t n_sector_unavailable = -1;   // Small sector stencils cut by boundaries, -1 if unknown
+        std::string cache_status;          // Stencil cache outcome, empty without a cache file
 };
 
 #endif // FACE_RECONSTRUCTION_H

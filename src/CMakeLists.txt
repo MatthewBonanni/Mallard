@@ -2,6 +2,8 @@
 add_library(MallardCore STATIC
     common/common_math.cpp
     common/common_io.cpp
+    common/build_info.cpp
+    common/log.cpp
     mesh/mesh.cpp
     mesh/mesh_io.cpp
     mesh/mesh_3d.cpp
@@ -36,6 +38,10 @@ target_include_directories(MallardCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/parallel
 )
 target_link_libraries(MallardCore PUBLIC Kokkos::kokkos)
+mallard_target_warnings(MallardCore)
+
+configure_file(common/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/version.h @ONLY)
+target_include_directories(MallardCore PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 if(Mallard_ENABLE_MPI)
     target_link_libraries(MallardCore PUBLIC MPI::MPI_CXX)
     target_compile_definitions(MallardCore PUBLIC Mallard_HAS_MPI)
@@ -49,15 +55,17 @@ if(Mallard_ENABLE_MPI)
 endif()
 
 if(Mallard_ENABLE_HDF5)
-    target_include_directories(MallardCore PUBLIC ${HDF5_C_INCLUDE_DIRS})
+    target_include_directories(MallardCore SYSTEM PUBLIC ${HDF5_C_INCLUDE_DIRS})
     target_compile_definitions(MallardCore PUBLIC Mallard_HAS_HDF5 ${HDF5_C_DEFINITIONS})
     target_link_libraries(MallardCore PUBLIC ${HDF5_C_LIBRARIES})
 endif()
 
 add_executable(Mallard main.cpp)
 target_link_libraries(Mallard PRIVATE MallardCore)
+mallard_target_warnings(Mallard)
 
 if(Mallard_ENABLE_HDF5)
     add_executable(mallard-mesh-convert mesh_convert.cpp)
     target_link_libraries(mallard-mesh-convert PRIVATE MallardCore)
+    mallard_target_warnings(mallard-mesh-convert)
 endif()

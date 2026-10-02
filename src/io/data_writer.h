@@ -45,14 +45,16 @@ static const std::unordered_map<DataFormat, std::string> FORMAT_NAMES = {
 struct RestartData {
     uint64_t step = 0;
     double t = 0.0;
-    uint64_t n_cells = 0;
-    std::vector<std::vector<rtype>> conservatives;  // [variable][cell]
+    uint64_t n_cells = 0;                           // in the file
+    std::vector<std::vector<rtype>> conservatives;  // [variable][cell read]
 };
 
 /**
- * @brief Read a restart file written by a DataWriter with format = "restart".
+ * @brief Read a restart file written by a DataWriter with format = "restart":
+ *        every cell, or with cells, only those global cells (conservatives
+ *        then hold their values in the order of cells).
  */
-RestartData read_restart(const std::string & filename);
+RestartData read_restart(const std::string & filename, const std::vector<uint64_t> * cells = nullptr);
 
 /**
  * @brief Writes snapshots either every `interval` steps or every
@@ -87,6 +89,15 @@ class DataWriter {
          */
         void resume(uint64_t step, rtype t);
 
+        /**
+         * @brief Format and the output key-value line for the run log.
+         */
+        std::pair<std::string, std::string> summary() const;
+
+        DataFormat get_format() const { return format; }
+        const std::string & get_prefix() const { return prefix; }
+        uint64_t files_written() const { return n_files; }
+
     protected:
         void write_vtu(const std::string & filename, rtype t) const;
         void write_vtu_faces(const std::string & filename, rtype t) const;
@@ -117,6 +128,8 @@ class DataWriter {
         std::shared_ptr<Mesh> mesh;
         std::vector<std::pair<rtype, std::string>> history;
         bool surface = false;
+        std::string geometry = "all";
+        uint64_t n_files = 0;
         void write_pvtu(const std::string & filename, const std::string & stem) const;
         void write_restart_distributed(const std::string & filename, uint64_t step, rtype t) const;
         std::vector<uint32_t> geometry_faces;  // Empty: write all cells

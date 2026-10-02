@@ -157,6 +157,7 @@ void Solver::launch_flux_functor() {
                                                     boundary_data,
                                                     W_cells,
                                                     face_flux,
-                                                    physics.gamma};
+                                                    physics.gamma,
+                                                    low_mach_cutoff};
     parallel_for_faces("convective_flux", functor, rhs_faces, mesh->n_faces);
 }
