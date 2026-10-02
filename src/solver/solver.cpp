@@ -376,6 +376,7 @@ void Solver::init_numerics() {
 
     rhs_func = [this](StateView solution, StateView rhs, rtype t_stage) { calc_rhs(solution, rhs, t_stage); };
     check_nan = toml::find_or<bool>(input, "numerics", "check_nan", false);
+    use_low_mach_correction = toml::find_or<bool>(input, "numerics", "low_mach_correction", true);
 }
 
 void Solver::init_run_parameters() {

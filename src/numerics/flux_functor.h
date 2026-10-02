@@ -18,6 +18,27 @@
 #include "boundary.h"
 
 /**
+ * @brief Low-Mach correction of Thornber et al. (J. Comput. Phys. 227, 2008):
+ *        scales the jump of the reconstructed velocity across a face by
+ *        z = min(1, max(M_L, M_R)), keeping its mean. Upwind fluxes otherwise
+ *        damp velocity jumps at the sound speed, a dissipation that does not
+ *        vanish as M -> 0; with the correction it scales with the flow speed.
+ *        Leaves supersonic faces (z = 1) untouched.
+ */
+KOKKOS_INLINE_FUNCTION
+void low_mach_correction(rtype * W_l, rtype * W_r, const rtype gamma) {
+    const rtype M_l2 = dot<N_DIM>(W_l + 1, W_l + 1) * W_l[0] / (gamma * W_l[N_DIM + 1]);
+    const rtype M_r2 = dot<N_DIM>(W_r + 1, W_r + 1) * W_r[0] / (gamma * W_r[N_DIM + 1]);
+    const rtype z = Kokkos::fmin(1.0, Kokkos::sqrt(Kokkos::fmax(M_l2, M_r2)));
+    FOR_I_DIM {
+        const rtype mean = 0.5 * (W_l[1 + i] + W_r[1 + i]);
+        const rtype half_jump = 0.5 * (W_l[1 + i] - W_r[1 + i]);
+        W_l[1 + i] = mean + z * half_jump;
+        W_r[1 + i] = mean - z * half_jump;
+    }
+}
+
+/**
  * @brief Integrates the convective flux over every face into face_flux, the
  *        rate of change it causes in cells_of_face(:, 0) (cells_of_face(:, 1)
  *        receives its negative). Boundary faces use the boundary ghost state
@@ -38,6 +59,7 @@ struct ConvectiveFluxFunctor {
     Kokkos::View<rtype *[N_CONSERVATIVE]> W_cells;
     Kokkos::View<rtype *[N_CONSERVATIVE]> face_flux;
     rtype gamma;
+    bool low_mach;
 
     KOKKOS_INLINE_FUNCTION
     void operator()(const uint32_t i_face) const {
@@ -66,6 +88,7 @@ struct ConvectiveFluxFunctor {
             FOR_I_CONSERVATIVE W_l[i] = face_solution(i_face, i_quad, 0, i);
             if (c1 >= 0) {
                 FOR_I_CONSERVATIVE W_r[i] = face_solution(i_face, i_quad, 1, i);
+                if (low_mach) low_mach_correction(W_l, W_r, gamma);
             } else {
                 boundaries.exterior_W(i_face, i_quad, n_quad, W_l, n_unit, W_cells, face_solution, W_r);
             }
