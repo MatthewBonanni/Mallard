@@ -30,6 +30,7 @@ enum class BoundaryType {
     WALL_HEAT_FLUX,
     UPT,
     P_OUT,
+    P_OUT_AVERAGE,
     DIRICHLET,
 };
 
@@ -41,6 +42,7 @@ static const std::unordered_map<std::string, BoundaryType> BOUNDARY_TYPES = {
     {"wall_heat_flux", BoundaryType::WALL_HEAT_FLUX},
     {"upt", BoundaryType::UPT},
     {"p_out", BoundaryType::P_OUT},
+    {"p_out_average", BoundaryType::P_OUT_AVERAGE},
     {"dirichlet", BoundaryType::DIRICHLET}
 };
 
@@ -52,6 +54,7 @@ static const std::unordered_map<BoundaryType, std::string> BOUNDARY_NAMES = {
     {BoundaryType::WALL_HEAT_FLUX, "wall_heat_flux"},
     {BoundaryType::UPT, "upt"},
     {BoundaryType::P_OUT, "p_out"},
+    {BoundaryType::P_OUT_AVERAGE, "p_out_average"},
     {BoundaryType::DIRICHLET, "dirichlet"}
 };
 
@@ -63,6 +66,9 @@ static const std::unordered_map<BoundaryType, std::string> BOUNDARY_NAMES = {
  * The meaning of data depends on type:
  * - UPT: data = W = [rho, u_x, u_y, p] of the inflow state
  * - P_OUT: data[3] = back pressure
+ * - P_OUT_AVERAGE: data[3] = target area-averaged pressure; data[0] = current
+ *   pressure shift (target minus the average of the adjacent cells), updated
+ *   every stage
  * - walls: data[1], data[2] = wall velocity; WALL_ISOTHERMAL: data[0] = wall
  *   temperature; WALL_HEAT_FLUX: data[3] = heat flux into the fluid
  * - DIRICHLET: unused; the exterior state is set per face (BoundaryData::face_state)
@@ -126,6 +132,17 @@ struct BoundaryCondition {
                     // Subsonic: impose pressure, keep temperature
                     W_g[0] = W_i[0] * data[3] / W_i[3];
                     W_g[3] = data[3];
+                }
+                break;
+            }
+            case BoundaryType::P_OUT_AVERAGE: {
+                const rtype a = Kokkos::sqrt(gamma * W_i[3] / W_i[0]);
+                if (u_n < a) {
+                    // Subsonic: shift the local pressure so the boundary average
+                    // matches the target, keeping temperature
+                    const rtype p_g = Kokkos::fmax(W_i[3] + data[0], 1e-3 * W_i[3]);
+                    W_g[0] = W_i[0] * p_g / W_i[3];
+                    W_g[3] = p_g;
                 }
                 break;
             }
