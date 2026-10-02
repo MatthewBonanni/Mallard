@@ -328,4 +328,26 @@ TEST_P(Couette3D, LinearVelocityAndWallForces) {
     EXPECT_NEAR(front[5], 0.0, 1e-4);
 }
 
+TEST_P(Couette3D, HeatFluxWallSetsTemperatureGradient) {
+    // q into the fluid through the back plate, isothermal front plate: dT/dz = -q / kappa
+    Case3D c;
+    c.mesh = GetParam();
+    c.n[0] = 2;
+    c.n[1] = 2;
+    c.n[2] = 8;
+    c.recon = "MUSCL";
+    c.bc[4] = "type = \"wall_heat_flux\"\nq = 0.2\n";
+    c.bc[5] = "type = \"wall_isothermal\"\nT = 1.0\n";
+    c.init = "type = \"analytical\"\nrho = \"1.0\"\nu = [\"0.0\", \"0.0\", \"0.0\"]\np = \"1.0\"\n";
+    c.run = "t_stop = 12.0\ncfl = 0.8\n";
+    c.physics = "type = \"navier_stokes\"\ngamma = 1.4\np_ref = 1.0\nT_ref = 1.0\nrho_ref = 1.0\nmu = 0.2\nPr = 0.72\n";
+    auto solver = run_case(c);
+    const double kappa = 0.2 * 3.5 / 0.72;
+    auto m = solver->get_mesh();
+    for (uint32_t i = 0; i < m->n_cells; i++) {
+        const double z = m->h_cell_coords(i, 2);
+        EXPECT_NEAR(solver->h_primitives(i, 4), 1.0 + 0.2 * (1.0 - z) / kappa, 5e-4);
+    }
+}
+
 INSTANTIATE_TEST_SUITE_P(Solver3D, Couette3D, ::testing::Values("cartesian", "cartesian_tet"));
