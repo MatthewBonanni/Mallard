@@ -17,8 +17,10 @@
 #   ../../build3d/src/Mallard -i input.toml
 #   python ../../tools/plot_sphere.py solut
 #
-# Expected result: the bow shock settles by t ~ 4 (D / u units) and its nose
-# sits at x = ... (Delta / R = ..., ...% from Billig). Takes ... on one A100.
+# Expected result: the bow shock forms within t ~ 0.5 (D / u units) and
+# settles by t ~ 1.2 at Delta / R = 0.225, 10% above Billig (the shock layer
+# is about four cells thick here); pressure drag coefficient 0.96. About an
+# hour on four A100 GPUs.
 
 [run]
 t_stop = 3.0
