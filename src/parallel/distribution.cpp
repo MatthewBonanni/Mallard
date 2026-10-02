@@ -104,7 +104,7 @@ std::shared_ptr<Mesh> build_local_mesh(Mesh & global, const std::vector<int> & o
             k++;
         }
     }
-    std::vector<Mesh::BoundaryEdge> edges;
+    std::vector<Mesh::BoundaryFace> boundary_faces;
     for (uint32_t c : dist.global_cell) {
         for (uint32_t k = 0; k < global.h_n_faces_of_cell(c); k++) {
             const uint32_t f = global.h_face_of_cell(c, k);
@@ -118,13 +118,16 @@ std::shared_ptr<Mesh> build_local_mesh(Mesh & global, const std::vector<int> & o
             } else {
                 continue;
             }
-            edges.push_back({{local_node.at(global.h_node_of_face(f, 0)), local_node.at(global.h_node_of_face(f, 1))},
-                             zone});
+            std::vector<uint32_t> face_nodes;
+            for (uint32_t k = 0; k < global.h_n_nodes_of_face(f); k++) {
+                face_nodes.push_back(local_node.at(global.h_node_of_face(f, k)));
+            }
+            boundary_faces.push_back({std::move(face_nodes), zone});
         }
     }
 
     auto local = std::make_shared<Mesh>();
-    local->init_from_connectivity(nodes, cells, edges);
+    local->init_from_connectivity(nodes, cells, boundary_faces);
     local->n_owned_cells = dist.n_owned;
     local->n_reconstructed_cells = std::count_if(dist.layer.begin(), dist.layer.end(), [](uint8_t l) { return l <= 1; });
 
