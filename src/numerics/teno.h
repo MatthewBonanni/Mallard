@@ -38,6 +38,64 @@ constexpr uint8_t MAX_FACES = (N_DIM == 2) ? 4 : 6;
 constexpr uint8_t MAX_FACE_QUAD = (N_DIM == 2) ? 4 : 9;
 
 /**
+ * @brief Index of entry (l, m), l <= m, of a symmetric n x n matrix stored as
+ *        its upper triangle, row by row.
+ */
+KOKKOS_INLINE_FUNCTION
+constexpr uint16_t upper_index(const uint8_t l, const uint8_t m, const uint8_t n) {
+    return l * n - l * (l - 1) / 2 + (m - l);
+}
+
+/**
+ * @brief log2 of the cells per slice of PackedStencils: 32 on GPUs, so that a
+ *        warp reads consecutive words, and 1 on the host, where each cell's
+ *        stencil is then contiguous.
+ */
+constexpr uint8_t SLICE_SHIFT =
+    Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, Kokkos::HostSpace>::accessible ? 0 : 5;
+
+/** @brief log2 of the cells per separately allocated chunk of PackedStencils. */
+constexpr uint8_t CHUNK_SHIFT = 13;
+
+/**
+ * @brief Per-cell stencils of different sizes, stored without padding to the
+ *        largest one in the mesh. Slot s of a cell's stencil holds the stencil
+ *        cell, its mirror boundary face (or -1) and `width` pseudo-inverse
+ *        entries. Consecutive cells form slices of 2^shift cells; a slice is
+ *        padded to its largest stencil and interleaves its cells' slots. Chunks
+ *        of 2^CHUNK_SHIFT cells are separate allocations, so the setup can
+ *        store each chunk as soon as it is computed.
+ */
+struct PackedStencils {
+    struct Chunk {
+        rtype * pinv;
+        int32_t * cells;
+        int32_t * faces;
+    };
+    Kokkos::View<uint32_t *> slice_start;  // (slice): first slot of the slice within its chunk
+    Kokkos::View<Chunk *> chunks;
+    uint8_t shift = SLICE_SHIFT;
+    uint8_t width = 0;
+
+    KOKKOS_INLINE_FUNCTION
+    int32_t cell(const uint32_t c, const uint32_t s) const { return chunks(c >> CHUNK_SHIFT).cells[slot(c, s)]; }
+
+    KOKKOS_INLINE_FUNCTION
+    int32_t face(const uint32_t c, const uint32_t s) const { return chunks(c >> CHUNK_SHIFT).faces[slot(c, s)]; }
+
+    KOKKOS_INLINE_FUNCTION
+    rtype pinv(const uint32_t c, const uint32_t s, const uint32_t l) const {
+        return chunks(c >> CHUNK_SHIFT).pinv[(((slice_start(c >> shift) + s) * width + l) << shift) + lane(c)];
+    }
+
+    KOKKOS_INLINE_FUNCTION
+    uint32_t lane(const uint32_t c) const { return c & ((1u << shift) - 1); }
+
+    KOKKOS_INLINE_FUNCTION
+    uint32_t slot(const uint32_t c, const uint32_t s) const { return ((slice_start(c >> shift) + s) << shift) + lane(c); }
+};
+
+/**
  * @brief Exponents (a, b) of the l-th monomial xi^a eta^b, ordered by total
  *        degree: (1,0), (0,1), (2,0), (1,1), (0,2), (3,0), ...
  */
