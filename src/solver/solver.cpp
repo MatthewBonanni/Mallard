@@ -13,6 +13,7 @@
 
 #include "input.h"
 
+#include <algorithm>
 #include <cmath>
 #include <iomanip>
 #include <filesystem>
@@ -141,7 +142,10 @@ void Solver::init_physics() {
 
 void Solver::init_boundaries() {
     std::cout << "Initializing boundaries..." << std::endl;
-    std::vector<toml::value> input_boundaries = toml::find<std::vector<toml::value>>(input, "boundaries");
+    // A fully periodic mesh has no boundary faces
+    const std::vector<toml::value> input_boundaries =
+        input.contains("boundaries") ? toml::find<std::vector<toml::value>>(input, "boundaries")
+                                     : std::vector<toml::value>{};
     std::vector<int32_t> face_bc(mesh->n_faces, -1);
     std::vector<BoundaryCondition> bcs;
 
@@ -154,6 +158,10 @@ void Solver::init_boundaries() {
             throw std::runtime_error("Boundary type not specified.");
         }
         const std::string name = toml::find<std::string>(bound, "name");
+        const auto & periodic = mesh->periodic_zones;
+        if (std::find(periodic.begin(), periodic.end(), name) != periodic.end()) {
+            throw std::runtime_error("Boundary " + name + " is periodic and takes no condition.");
+        }
         FaceZone * zone = mesh->get_face_zone(name);
         if (zone != nullptr && zone->get_type() != FaceZoneType::BOUNDARY) zone = nullptr;
         // A rank's part of the mesh may not touch every zone
@@ -462,6 +470,7 @@ void Solver::init_output() {
         }
         if (!viscous_gradients.is_allocated()) {
             viscous_gradients = Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]>("viscous_gradients", mesh->n_cells);
+            viscous_gradient = make_vertex_gradient(make_gradient(*mesh, boundary_data, W_cells, viscous_gradients), *mesh);
         }
         const std::string file = toml::find_or<std::string>(input, "integrals", "file", "integrals.csv");
         if (comm::is_root()) {
@@ -496,10 +505,7 @@ void Solver::allocate_memory() {
     cfl_local = Kokkos::View<rtype *>("cfl_local", mesh->n_cells);
     if (physics.is_viscous()) {
         viscous_gradients = Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]>("viscous_gradients", mesh->n_cells);
-        LSQGradientFunctor gradient_functor{mesh->offsets_faces_of_cell, mesh->faces_of_cell,
-                                            mesh->cells_of_face, mesh->cell_coords, mesh->face_coords,
-                                            mesh->face_normals, boundary_data, W_cells, viscous_gradients};
-        viscous_gradient = make_vertex_gradient(gradient_functor, mesh->offsets_cells_of_cell, mesh->cells_of_cell);
+        viscous_gradient = make_vertex_gradient(make_gradient(*mesh, boundary_data, W_cells, viscous_gradients), *mesh);
     }
     h_conservatives = Kokkos::create_mirror_view(conservatives);
     h_primitives = Kokkos::create_mirror_view(primitives);
@@ -956,12 +962,7 @@ std::array<rtype, 4> Solver::integrate_flow_statistics() {
         phys.compute_W_from_conservatives(W_c, cons);
         FOR_I_CONSERVATIVE W(i_cell, i) = W_c[i];
     });
-    LSQGradientFunctor gradient_functor{mesh->offsets_faces_of_cell, mesh->faces_of_cell,
-                                        mesh->cells_of_face, mesh->cell_coords, mesh->face_coords,
-                                        mesh->face_normals, boundary_data, W_cells, viscous_gradients};
-    LSQVertexGradientFunctor vertex_gradient_functor{gradient_functor, mesh->offsets_cells_of_cell,
-                                                     mesh->cells_of_cell};
-    Kokkos::parallel_for("statistics_gradients", mesh->n_owned(), vertex_gradient_functor);
+    Kokkos::parallel_for("statistics_gradients", mesh->n_owned(), viscous_gradient);
     FlowStatisticsFunctor functor{W_cells, viscous_gradients, mesh->cell_volume};
     FlowStatisticsFunctor::value_type result;
     Kokkos::parallel_reduce("statistics", mesh->n_owned(), functor, result);

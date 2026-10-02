@@ -35,15 +35,7 @@ std::array<rtype, 2> wedge_node(rtype x, rtype y, rtype Ly) {
     return {x, y};
 }
 
-namespace {
-
-/**
- * @brief Cells [first_cell, end_cell) and nodes [first_node, end_node) of the
- *        2D generated meshes, numbered as Mesh::init_cart, init_cart_tri and
- *        init_wedge number them.
- */
-MeshBlock cartesian_2d_block(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, MeshType kind) {
-    const int r = comm::rank(), p = comm::size();
+MeshBlock cartesian_2d_block(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, MeshType kind, int r, int p) {
     const bool tri = kind == MeshType::CARTESIAN_TRI;
     const uint64_t n_cells = uint64_t(nx) * ny * (tri ? 2 : 1);
     const uint64_t n_nodes = uint64_t(nx + 1) * (ny + 1);
@@ -85,6 +77,8 @@ MeshBlock cartesian_2d_block(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, MeshT
     }
     return block;
 }
+
+namespace {
 
 /** @brief Cells and pyramid apex nodes of each hexahedral block of slab i. */
 struct SlabLayout {
@@ -243,6 +237,9 @@ bool is_hdf5_mesh(const std::string & filename) {
 }
 
 MeshBlock read_mesh_block(const toml::value & input) {
+    if (!Mesh::periodic_pairs(input).empty()) {
+        throw std::runtime_error("Periodic meshes do not support distributed runs or HDF5 conversion yet.");
+    }
     const std::string type_str = toml::find_or<std::string>(input, "mesh", "type", "file");
     const auto it = MESH_TYPES.find(type_str);
     if (it == MESH_TYPES.end()) throw std::runtime_error("Unknown mesh type: " + type_str + ".");
@@ -270,7 +267,7 @@ MeshBlock read_mesh_block(const toml::value & input) {
     if (type != MeshType::CARTESIAN && type != MeshType::CARTESIAN_TRI && type != MeshType::WEDGE) {
         throw std::runtime_error("Mesh type " + type_str + " is 3D only.");
     }
-    return cartesian_2d_block(Nx, Ny, Lx, Ly, type);
+    return cartesian_2d_block(Nx, Ny, Lx, Ly, type, comm::rank(), comm::size());
 }
 
 #ifdef Mallard_HAS_HDF5
