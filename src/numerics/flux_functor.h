@@ -29,7 +29,7 @@ KOKKOS_INLINE_FUNCTION
 void low_mach_correction(rtype * W_l, rtype * W_r, const rtype gamma) {
     const rtype M_l2 = dot<N_DIM>(W_l + 1, W_l + 1) * W_l[0] / (gamma * W_l[N_DIM + 1]);
     const rtype M_r2 = dot<N_DIM>(W_r + 1, W_r + 1) * W_r[0] / (gamma * W_r[N_DIM + 1]);
-    const rtype z = Kokkos::fmin(1.0, Kokkos::sqrt(Kokkos::fmax(M_l2, M_r2)));
+    const rtype z = Kokkos::fmin(1.0, Kokkos::fmax(0.1, Kokkos::sqrt(Kokkos::fmax(M_l2, M_r2))));
     FOR_I_DIM {
         const rtype mean = 0.5 * (W_l[1 + i] + W_r[1 + i]);
         const rtype half_jump = 0.5 * (W_l[1 + i] - W_r[1 + i]);
