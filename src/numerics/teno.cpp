@@ -944,7 +944,8 @@ void TENO::calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                         scale, basis_mean, stencil_large_size, stencil_large, stencil_large_face, pinv_large,
                         stencil_small_size, stencil_small, stencil_small_face, pinv_small,
                         si_matrix, troubled, solution, face_solution};
-    Kokkos::parallel_for("teno_reconstruction", mesh->n_cells, functor);
+    Kokkos::parallel_for("teno_reconstruction",
+                         Kokkos::RangePolicy<Kokkos::Schedule<Kokkos::Dynamic>>(0, mesh->n_cells), functor);
 }
 
 namespace {
