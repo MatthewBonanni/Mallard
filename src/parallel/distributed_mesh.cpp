@@ -451,5 +451,7 @@ std::shared_ptr<Mesh> DistributedMesh::build_local_mesh(int halo_layers, Distrib
     mesh->h_global_cell_id = dist.global_cell;
     mesh->n_global_cells = n_global_cells();
     mesh->n_reconstructed_cells = std::count_if(dist.layer.begin(), dist.layer.end(), [](uint8_t l) { return l <= 1; });
+    mesh->n_complete_cells =
+        std::count_if(dist.layer.begin(), dist.layer.end(), [&](uint8_t l) { return l < halo_layers; });
     return mesh;
 }

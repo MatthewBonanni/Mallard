@@ -150,6 +150,8 @@ std::shared_ptr<Mesh> build_local_mesh_from_global(Mesh & global, const std::vec
     local->h_global_cell_id = dist.global_cell;
     local->n_global_cells = n_global;
     local->n_reconstructed_cells = std::count_if(dist.layer.begin(), dist.layer.end(), [](uint8_t l) { return l <= 1; });
+    local->n_complete_cells =
+        std::count_if(dist.layer.begin(), dist.layer.end(), [&](uint8_t l) { return l < halo_layers; });
 
     std::vector<int> halo_owner;
     for (size_t i = dist.n_owned; i < dist.global_cell.size(); i++) halo_owner.push_back(owner[dist.global_cell[i]]);
@@ -184,6 +186,7 @@ void expect_same(Mesh & mesh, const Distribution & dist, Mesh & ref, const Distr
     EXPECT_EQ(mesh.h_global_cell_id, ref.h_global_cell_id);
     EXPECT_EQ(mesh.n_global_cells, ref.n_global_cells);
     EXPECT_EQ(mesh.n_reconstructed(), ref.n_reconstructed());
+    EXPECT_EQ(mesh.n_complete(), ref.n_complete());
     ASSERT_EQ(mesh.n_cells, ref.n_cells);
     EXPECT_EQ(mesh.n_nodes, ref.n_nodes);
     EXPECT_EQ(mesh.n_faces, ref.n_faces);
