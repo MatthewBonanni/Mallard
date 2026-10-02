@@ -110,13 +110,14 @@ int32_t find_image_face_3d(const Mesh & mesh, uint32_t f, int32_t image, const r
     for (uint32_t k = 0; k < mesh.h_n_faces_of_cell(image); k++) {
         const uint32_t g = mesh.h_face_of_cell(image, k);
         const rtype A_g = mesh.h_face_area(g);
-        rtype dist = 0.0, n_dot = 0.0;
+        rtype dist = 0.0, cross2 = 0.0;
         FOR_I_DIM {
             dist += std::pow(mesh.h_face_coords(g, i) - target[i], 2);
-            n_dot += mesh.h_face_normals(f, i) * mesh.h_face_normals(g, i);
+            const uint8_t j = (i + 1) % 3, k = (i + 2) % 3;
+            cross2 += std::pow(mesh.h_face_normals(f, j) * mesh.h_face_normals(g, k) -
+                               mesh.h_face_normals(f, k) * mesh.h_face_normals(g, j), 2);
         }
-        const rtype sin2 = std::max<rtype>(0.0, 1.0 - n_dot * n_dot / (A_f * A_f * A_g * A_g));
-        if (dist < 1e-12 * A_f && sin2 < 1e-16 && std::abs(A_g - A_f) < 1e-10 * A_f) {
+        if (dist < 1e-12 * A_f && cross2 < 1e-20 * A_f * A_f * A_g * A_g && std::abs(A_g - A_f) < 1e-10 * A_f) {
             return g;
         }
     }
