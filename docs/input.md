@@ -116,7 +116,7 @@ Optional source terms, added per unit volume.
 | `rho`, `rhou`, `rhoE` | Expressions in `x`, `y`, `t` (`rhou` is a two-element array) for the mass, momentum and energy sources |
 | `time_dependent` | Re-evaluate the expressions at every Runge-Kutta stage (host-side, so costly on large meshes); otherwise they are evaluated once |
 
-The scheme is not well balanced: hydrostatic states carry small spurious velocities that vanish under refinement.
+The scheme is not exactly well balanced: hydrostatic states carry small spurious velocities (about 1e-4 of the sound speed on a 32x32 mesh) that vanish at second order under refinement. Wall and symmetry ghost states continue the hydrostatic pressure gradient.
 
 ## `[output]`
 
