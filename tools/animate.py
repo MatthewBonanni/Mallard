@@ -109,11 +109,14 @@ def mach(d, gamma):
     return np.hypot(d["U_X"], d["U_Y"]) / np.sqrt(gamma * d["P"] / d["RHO"])
 
 
-def write_video(stem, frames, fps, gif_every, gif_width):
+def write_video(stem, frames, fps, gif_every, gif_width, frames_dir=None):
     """H.264 MP4 of all frames, and a two-pass ffmpeg GIF (palette tuned to the
     moving parts, no dithering) of every gif_every-th frame."""
     ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     with tempfile.TemporaryDirectory() as tmp:
+        if frames_dir:
+            os.makedirs(frames_dir, exist_ok=True)
+            tmp = frames_dir
         for i, frame in enumerate(frames):
             imageio.imwrite(os.path.join(tmp, f"{i:05d}.png"), frame)
         pattern = os.path.join(tmp, "%05d.png")
@@ -159,6 +162,7 @@ def main():
                     help="Figure width in inches; text and lines scale with it, so the layout is unchanged")
     ap.add_argument("--gif-width", type=int, default=None, help="GIF width in pixels (default: the frame width)")
     ap.add_argument("--gif-every", type=int, default=1, help="Use every n-th frame in the GIF (the MP4 has all)")
+    ap.add_argument("--frames-dir", help="Keep the PNG frames in this directory")
     args = ap.parse_args()
 
     files = sorted(glob.glob(os.path.join(args.series_dir, args.glob)))[::args.every]
@@ -275,7 +279,7 @@ def main():
 
     # Hold the final frame for a moment
     frames += [frames[-1]] * args.fps
-    write_video(args.output_stem, frames, args.fps, args.gif_every, args.gif_width or frames[0].shape[1])
+    write_video(args.output_stem, frames, args.fps, args.gif_every, args.gif_width or frames[0].shape[1], args.frames_dir)
     imageio.imwrite(args.output_stem + "_final.png", frames[-1])
     print("wrote", args.output_stem + ".mp4", args.output_stem + ".gif")
 
