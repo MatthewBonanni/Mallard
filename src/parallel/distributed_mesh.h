@@ -56,14 +56,14 @@ class DistributedMesh {
         /** @brief First block cell of every rank, and the total (ParMETIS vtxdist). */
         const std::vector<uint64_t> & cell_distribution() const { return cell_dist; }
 
-        /** @brief Dual graph of the block cells (cells sharing a face), by global id (CSR). */
+        /** @brief Dual graph of the block cells (cells sharing a face), by global id (CSR); until distribute(). */
         const std::vector<uint64_t> & graph_offsets() const { return graph_offsets_; }
         const std::vector<uint64_t> & graph_neighbors() const { return graph_neighbors_; }
 
         /** @brief Vertex average of every block cell (collective). */
         std::vector<std::array<double, N_DIM>> block_cell_centers() const;
 
-        /** @brief Send every block cell to its owner rank (collective). */
+        /** @brief Send every block cell to its owner rank, and drop the dual graph (collective). */
         void distribute(const std::vector<int> & owner);
 
         /**
@@ -89,7 +89,7 @@ class DistributedMesh {
         int rank_of_cell(uint64_t g) const;
         int rank_of_node(uint64_t g) const;
         void append_record(std::vector<uint64_t> & out, uint32_t i) const;
-        void read_records(const std::vector<std::vector<uint64_t>> & in, uint8_t layer);
+        void read_records(const std::vector<uint64_t> & in, uint8_t layer);
         std::vector<std::array<double, N_DIM>> fetch_nodes(const std::vector<uint64_t> & sorted_ids) const;
         void grow_layer();
 
