@@ -28,6 +28,7 @@
 #include "comm.h"
 #include "common.h"
 #include "log.h"
+#include "mesh_block.h"
 #include "partition.h"
 #include "expression.h"
 #include "gradient.h"
@@ -78,6 +79,7 @@ int Solver::init(const toml::value & input) {
             init_numerics();
         });
     }
+    setup.reset();
     timed_phase("fields and output", [&] {
         allocate_memory();
         init_sources();
@@ -94,70 +96,112 @@ int Solver::init(const toml::value & input) {
 namespace {
 
 /**
- * @brief Cell counts by type, faces, extent and volume range of a whole (undistributed) mesh.
+ * @brief Cell counts by type, faces, extent and cell size range over all ranks.
+ *        Each rank counts its owned cells; a face between two ranks is counted by
+ *        the rank owning the side with the lower global cell id.
  */
 logging::Items describe_mesh(const Mesh & mesh) {
     using logging::count;
     using logging::format;
-    std::map<uint32_t, uint64_t> by_nodes;
+    const bool distributed = !mesh.h_global_cell_id.empty();
+    const uint32_t n_owned = mesh.n_owned();
+    auto owned = [&](int32_t c) { return c >= 0 && static_cast<uint32_t>(c) < n_owned; };
+
+    constexpr int MAX_NODES = 9;
+    std::array<uint64_t, MAX_NODES + 2> counts{};  // cells by node count, then faces, boundary faces
     rtype v_min = std::numeric_limits<rtype>::max(), v_max = 0.0;
-    for (uint32_t i = 0; i < mesh.n_cells; i++) {
-        by_nodes[mesh.h_n_nodes_of_cell(i)]++;
+    for (uint32_t i = 0; i < n_owned; i++) {
+        counts[std::min<uint32_t>(mesh.h_n_nodes_of_cell(i), MAX_NODES - 1)]++;
         v_min = std::min(v_min, mesh.h_cell_volume(i));
         v_max = std::max(v_max, mesh.h_cell_volume(i));
     }
+    for (uint32_t f = 0; f < mesh.n_faces; f++) {
+        const int32_t a = mesh.h_cells_of_face(f, 0), b = mesh.h_cells_of_face(f, 1);
+        if (b < 0) {
+            counts[MAX_NODES] += owned(a);
+            counts[MAX_NODES + 1] += owned(a);
+        } else if (owned(a) && owned(b)) {
+            counts[MAX_NODES]++;
+        } else if (owned(a) != owned(b) && distributed) {
+            const int32_t mine = owned(a) ? a : b, other = owned(a) ? b : a;
+            counts[MAX_NODES] += mesh.h_global_cell_id[mine] < mesh.h_global_cell_id[other];
+        }
+    }
+    counts = comm::allreduce(counts, comm::Op::SUM);
+
+    std::array<rtype, 2 * N_DIM + 2> lo_hi;  // -min and max per dimension, -min and max volume
+    lo_hi.fill(std::numeric_limits<rtype>::lowest());
+    for (uint32_t n = 0; n < mesh.n_nodes; n++) {
+        for (int d = 0; d < N_DIM; d++) {
+            lo_hi[d] = std::max(lo_hi[d], -mesh.h_node_coords(n, d));
+            lo_hi[N_DIM + d] = std::max(lo_hi[N_DIM + d], mesh.h_node_coords(n, d));
+        }
+    }
+    lo_hi[2 * N_DIM] = -v_min;
+    lo_hi[2 * N_DIM + 1] = v_max;
+    lo_hi = comm::allreduce(lo_hi, comm::Op::MAX);
+    v_min = -lo_hi[2 * N_DIM];
+    v_max = lo_hi[2 * N_DIM + 1];
+
     const std::map<uint32_t, const char *> names = N_DIM == 2
         ? std::map<uint32_t, const char *>{{3, "tri"}, {4, "quad"}}
         : std::map<uint32_t, const char *>{{4, "tet"}, {5, "pyramid"}, {6, "prism"}, {8, "hex"}};
     std::string types;
-    for (const auto & [n_nodes, n] : by_nodes) {
-        const auto it = names.find(n_nodes);
-        types += (types.empty() ? "" : ", ") + count(n) + " " +
-                 (it != names.end() ? std::string(it->second) : std::to_string(n_nodes) + "-node");
-    }
-    uint64_t n_boundary = 0;
-    for (uint32_t f = 0; f < mesh.n_faces; f++) n_boundary += mesh.h_cells_of_face(f, 1) < 0;
-    std::array<rtype, N_DIM> lo, hi;
-    lo.fill(std::numeric_limits<rtype>::max());
-    hi.fill(std::numeric_limits<rtype>::lowest());
-    for (uint32_t n = 0; n < mesh.n_nodes; n++) {
-        for (int d = 0; d < N_DIM; d++) {
-            lo[d] = std::min(lo[d], mesh.h_node_coords(n, d));
-            hi[d] = std::max(hi[d], mesh.h_node_coords(n, d));
-        }
+    uint64_t n_cells = 0;
+    int n_types = 0;
+    for (int k = 0; k < MAX_NODES; k++) {
+        if (counts[k] == 0) continue;
+        const auto it = names.find(k);
+        types += (types.empty() ? "" : ", ") + count(counts[k]) + " " +
+                 (it != names.end() ? std::string(it->second) : std::to_string(k) + "-node");
+        n_cells += counts[k];
+        n_types++;
     }
     std::string extent;
     for (int d = 0; d < N_DIM; d++) {
-        extent += (d ? " x " : "") + format("[%.4g, %.4g]", static_cast<double>(lo[d]), static_cast<double>(hi[d]));
+        extent += (d ? " x " : "") +
+                  format("[%.4g, %.4g]", static_cast<double>(-lo_hi[d]), static_cast<double>(lo_hi[N_DIM + d]));
     }
     return {
-        {"Cells", by_nodes.size() == 1 ? types : count(mesh.n_cells) + ": " + types},
-        {"Faces", count(mesh.n_faces) + " (" + count(n_boundary) + " boundary)"},
+        {"Cells", n_types == 1 ? types : count(n_cells) + ": " + types},
+        {"Faces", count(counts[MAX_NODES]) + " (" + count(counts[MAX_NODES + 1]) + " boundary)"},
         {"Extent", extent},
-        {N_DIM == 2 ? "Cell area" : "Cell volume", format("%.3e to %.3e (ratio %.3g)", static_cast<double>(v_min), static_cast<double>(v_max),
-                               static_cast<double>(v_max / v_min))},
+        {N_DIM == 2 ? "Cell area" : "Cell volume",
+         format("%.3e to %.3e (ratio %.3g)", static_cast<double>(v_min), static_cast<double>(v_max),
+                static_cast<double>(v_max / v_min))},
     };
 }
 
 } // namespace
 
 void Solver::init_mesh() {
-    mesh = std::make_shared<Mesh>();
-    mesh->init(input);
-    mesh_summary = describe_mesh(*mesh);
-    mesh_summary.insert(mesh_summary.begin(), {"Type", MESH_NAMES.at(mesh->get_type())});
-    n_cells_global = mesh->n_cells;
-    if (is_distributed()) {
+    const std::string type = toml::find_or<std::string>(input, "mesh", "type", "file");
+    if (!is_distributed()) {
+        mesh = std::make_shared<Mesh>();
+        mesh->init(input);
+    } else {
         if (halo_layers == 0) halo_layers = base_halo_layers();
-        const std::string partitioner = toml::find_or<std::string>(
-            input, "parallel", "partitioner", have_graph_partitioner() ? "graph" : "hilbert");
-        if (partitioner != "graph" && partitioner != "hilbert") {
-            throw InputError("parallel.partitioner = \"" + partitioner + "\" is not one of: graph, hilbert.");
+        // Partition once; deeper halos (see halo_too_shallow) grow the existing layers
+        if (!setup) {
+            partitioner = toml::find_or<std::string>(input, "parallel", "partitioner",
+                                                     have_graph_partitioner() ? "graph" : "hilbert");
+            if (partitioner != "graph" && partitioner != "hilbert") {
+                throw InputError("parallel.partitioner = \"" + partitioner + "\" is not one of: graph, hilbert.");
+            }
+            setup = std::make_unique<DistributedMesh>(read_mesh_block(input));
+            setup->distribute(partitioner == "graph" ? partition_graph(*setup, comm::size())
+                                                     : partition_hilbert(*setup, comm::size()));
         }
-        const std::vector<int> owner = partitioner == "graph" ? partition_graph(*mesh, comm::size())
-                                                              : partition_hilbert(*mesh, comm::size());
-        mesh = build_local_mesh(*mesh, owner, halo_layers, distribution);
+        mesh = setup->build_local_mesh(halo_layers, distribution);
         halo = HaloExchange(distribution);
+    }
+    mesh_summary = describe_mesh(*mesh);
+    mesh_summary.insert(mesh_summary.begin(),
+                        {"Type", type == "file" ? "file " + toml::find_or<std::string>(input, "mesh", "filename",
+                                                                                         "mesh.msh")
+                                                : type});
+    n_cells_global = comm::allreduce(uint64_t(mesh->n_owned()), comm::Op::SUM);
+    if (is_distributed()) {
         const uint64_t n_owned = distribution.n_owned;
         const uint64_t n_halo = mesh->n_cells - distribution.n_owned;
         const uint64_t min_owned = comm::allreduce(n_owned, comm::Op::MIN);
@@ -165,10 +209,14 @@ void Solver::init_mesh() {
         const uint64_t max_halo = comm::allreduce(n_halo, comm::Op::MAX);
         const double mean = static_cast<double>(n_cells_global) / comm::size();
         mesh_summary.emplace_back("Partition", logging::format("%s, %d ranks, %d halo layers",
-            partitioner == "graph" ? "graph (KaMinPar)" : "Hilbert curve", comm::size(), halo_layers));
-        mesh_summary.emplace_back("Cells per rank", logging::format("%s to %s owned (imbalance %.3f), up to %s halo",
-            logging::count(min_owned).c_str(), logging::count(max_owned).c_str(), max_owned / mean,
-            logging::count(max_halo).c_str()));
+                                                               partitioner == "graph" ? "graph (KaMinPar)"
+                                                                                      : "Hilbert curve",
+                                                               comm::size(), halo_layers));
+        mesh_summary.emplace_back("Cells per rank",
+                                  logging::format("%s to %s owned (imbalance %.3f), up to %s halo",
+                                                  logging::count(min_owned).c_str(),
+                                                  logging::count(max_owned).c_str(), max_owned / mean,
+                                                  logging::count(max_halo).c_str()));
     }
     mesh->copy_host_to_device();
 }
@@ -471,6 +519,10 @@ void Solver::init_numerics() {
 
     rhs_func = [this](StateView solution, StateView rhs, rtype t_stage) { calc_rhs(solution, rhs, t_stage); };
     check_nan = toml::find_or<bool>(input, "numerics", "check_nan", false);
+    low_mach_cutoff = find_real_or(input, "numerics", "low_mach_cutoff", 0.1);
+    if (!(low_mach_cutoff > 0.0)) {
+        throw std::runtime_error("numerics: low_mach_cutoff must be positive (1 disables the low-Mach correction).");
+    }
 }
 
 void Solver::init_run_parameters() {

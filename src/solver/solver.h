@@ -29,6 +29,7 @@
 #include "data_writer.h"
 #include "expression.h"
 #include "comm.h"
+#include "distributed_mesh.h"
 #include "distribution.h"
 #include "halo_exchange.h"
 #include "log.h"
@@ -193,6 +194,8 @@ class Solver {
     private:
         bool distribute = true;
         int halo_layers = 0;
+        std::unique_ptr<DistributedMesh> setup;  // during init only
+        std::string partitioner;
         Distribution distribution;
         HaloExchange halo;
 
@@ -249,6 +252,7 @@ class Solver {
         rtype t_boundary_states;
         std::unique_ptr<FaceReconstruction> face_reconstruction;
         RiemannSolverType riemann_solver_type;
+        rtype low_mach_cutoff = 0.1;
         std::unique_ptr<TimeIntegrator> time_integrator;
 
         // Work arrays
