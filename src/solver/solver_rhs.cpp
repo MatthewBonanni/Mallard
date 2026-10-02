@@ -19,6 +19,9 @@
 
 void Solver::calc_rhs(StateView solution, StateView rhs, rtype t_stage) {
     update_boundary_states(t_stage);
+    if (!average_pressure_outlets.empty()) {
+        update_average_pressure_outlets(solution);
+    }
 
     const Euler phys = physics;
     Kokkos::View<rtype *[N_CONSERVATIVE]> W = W_cells;

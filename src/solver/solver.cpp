@@ -136,6 +136,12 @@ void Solver::init_boundaries() {
         }
         if (bcs.back().type == BoundaryType::DIRICHLET) {
             dirichlet_boundaries.push_back(std::move(dirichlet));
+        } else if (bcs.back().type == BoundaryType::P_OUT_AVERAGE) {
+            Kokkos::View<uint32_t *> faces("average_pressure_faces", dirichlet.faces.size());
+            auto h_faces = Kokkos::create_mirror_view(faces);
+            for (size_t i = 0; i < dirichlet.faces.size(); i++) h_faces(i) = dirichlet.faces[i];
+            Kokkos::deep_copy(faces, h_faces);
+            average_pressure_outlets.emplace_back(i_bc, faces);
         }
         std::cout << "> Boundary " << name << ": " << BOUNDARY_NAMES.at(bcs.back().type) << std::endl;
     }
@@ -200,6 +206,31 @@ void Solver::update_source_field(rtype t_eval) {
     }
     Kokkos::deep_copy(source_field, h_source_field);
     t_source = t_eval;
+}
+
+void Solver::update_average_pressure_outlets(StateView solution) {
+    const Euler phys = physics;
+    for (const auto & outlet : average_pressure_outlets) {
+        const int32_t i_bc = outlet.first;
+        Kokkos::View<uint32_t *> faces = outlet.second;
+        Kokkos::View<int32_t *[2]> cells_of_face = mesh->cells_of_face;
+        Kokkos::View<rtype *> face_area = mesh->face_area;
+        rtype pA = 0.0, A = 0.0;
+        Kokkos::parallel_reduce("outlet_average_pressure", faces.extent(0),
+                                KOKKOS_LAMBDA(const uint32_t k, rtype & sum_pA, rtype & sum_A) {
+            const uint32_t f = faces(k);
+            const int32_t c = cells_of_face(f, 0);
+            rtype U[N_CONSERVATIVE], W[N_CONSERVATIVE];
+            FOR_I_CONSERVATIVE U[i] = solution(c, i);
+            phys.compute_W_from_conservatives(W, U);
+            sum_pA += W[3] * face_area(f);
+            sum_A += face_area(f);
+        }, pA, A);
+        auto bc = Kokkos::subview(boundary_data.bcs, i_bc);
+        auto h_bc = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), bc);
+        h_bc().data[0] = h_bc().data[3] - pA / A;
+        Kokkos::deep_copy(bc, h_bc);
+    }
 }
 
 void Solver::update_boundary_states(rtype t_eval) {

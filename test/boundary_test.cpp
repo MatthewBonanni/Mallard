@@ -86,3 +86,49 @@ TEST(BoundaryTest, OverlappingOrMissingAssignmentsAreRejected) {
     EXPECT_THROW(b.init(parse_toml(strip_input("type = \"extrapolation\"\n", gap, "n_steps = 1\ncfl = 0.4\n", 20))),
                  std::runtime_error);
 }
+
+namespace {
+
+/**
+ * @brief Max deviation of the pressure in the outlet column from the
+ *        hydrostatic profile exp(-y), for a channel flow under gravity.
+ */
+double outlet_profile_error(const std::string & outlet) {
+    std::ostringstream s;
+    s << "[run]\nt_stop = 2.0\ncfl = 0.5\n"
+      << "[mesh]\ntype = \"cartesian\"\nNx = 20\nNy = 20\nLx = 1.0\nLy = 1.0\n"
+      << "[initialize]\ntype = \"analytical\"\nrho = \"exp(-y)\"\nu = [\"0.3\", \"0.0\"]\np = \"exp(-y)\"\n"
+      << "[[boundaries]]\nname = \"left\"\ntype = \"dirichlet\"\nrho = \"exp(-y)\"\nu = [\"0.3\", \"0.0\"]\np = \"exp(-y)\"\n"
+      << "[[boundaries]]\nname = \"right\"\n" << outlet
+      << "[[boundaries]]\nname = \"top\"\ntype = \"symmetry\"\n"
+      << "[[boundaries]]\nname = \"bottom\"\ntype = \"symmetry\"\n"
+      << "[numerics]\nriemann_solver = \"HLLC\"\ntime_integrator = \"SSPRK3\"\n"
+      << "[numerics.face_reconstruction]\ntype = \"MUSCL\"\n"
+      << "[physics]\ntype = \"euler\"\ngamma = 1.4\np_ref = 1.0\nT_ref = 1.0\nrho_ref = 1.0\n"
+      << "[output]\ncheck_interval = 1000000\n"
+      << "[source]\ngravity = [0.0, -1.0]\n";
+    Solver solver;
+    solver.init(parse_toml(s.str()));
+    solver.run();
+    solver.update_primitives();
+    solver.copy_device_to_host();
+    auto m = solver.get_mesh();
+    double err = 0.0;
+    for (uint32_t i = 0; i < m->n_cells; i++) {
+        if (m->h_cell_coords(i, 0) < 0.95) continue;
+        err = std::max(err, std::abs(solver.h_primitives(i, 2) - std::exp(-m->h_cell_coords(i, 1))));
+    }
+    return err;
+}
+
+} // namespace
+
+TEST(BoundaryTest, AveragePressureOutletKeepsTransversePressureProfile) {
+    // The mean of exp(-y) over [0, 1] is 1 - 1/e. A uniform back pressure
+    // fights the hydrostatic profile; imposing only its average does not.
+    const std::string target = "p = 0.6321205588285577\n";
+    const double uniform = outlet_profile_error("type = \"p_out\"\n" + target);
+    const double average = outlet_profile_error("type = \"p_out_average\"\n" + target);
+    EXPECT_GT(uniform, 0.1);
+    EXPECT_LT(average, 0.03);
+}
