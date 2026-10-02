@@ -28,6 +28,7 @@ option(${PROJECT_NAME}_ENABLE_MPI "Distributed memory parallelism with MPI" OFF)
 if(${PROJECT_NAME}_ENABLE_MPI)
     find_package(MPI REQUIRED COMPONENTS CXX)
     message(STATUS "Mallard: MPI ${MPI_CXX_VERSION}")
+    option(${PROJECT_NAME}_GPU_AWARE_MPI "Pass device buffers to MPI directly (CUDA-aware MPI)" OFF)
 endif()
 
 # HDF5 is not used by the solver yet; it is only built/found on request
