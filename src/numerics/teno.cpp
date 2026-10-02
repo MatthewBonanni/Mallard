@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -187,7 +188,11 @@ void TENO::init(const toml::value & input) {
     quadrature_face = GaussLegendre(n_gp);
 
     Kokkos::Timer timer;
-    compute_stencils_and_matrices();
+    const std::string cache_file = toml::find_or<std::string>(input, "cache_file", "");
+    if (cache_file.empty() || !load_cache(cache_file)) {
+        compute_stencils_and_matrices();
+        if (!cache_file.empty()) save_cache(cache_file);
+    }
     print();
     std::cout << "> Precomputation time: " << timer.seconds() << " s" << std::endl;
 }
@@ -938,4 +943,115 @@ void TENO::calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                         stencil_small_size, stencil_small, stencil_small_face, pinv_small,
                         si_matrix, troubled, solution, face_solution};
     Kokkos::parallel_for("teno_reconstruction", mesh->n_cells, functor);
+}
+
+namespace {
+
+constexpr char TENO_CACHE_MAGIC[16] = "MALLARD-TENO-1";
+
+struct Fnv1a {
+    uint64_t h = 1469598103934665603ULL;
+    void add(const void * data, size_t n) {
+        const unsigned char * p = static_cast<const unsigned char *>(data);
+        for (size_t i = 0; i < n; i++) {
+            h ^= p[i];
+            h *= 1099511628211ULL;
+        }
+    }
+    template <typename T>
+    void add(const T & value) { add(&value, sizeof(T)); }
+};
+
+template <typename View>
+void write_view(std::ofstream & out, const View & view) {
+    auto h = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), view);
+    for (int r = 0; r < 4; r++) {
+        const uint64_t e = view.extent(r);
+        out.write(reinterpret_cast<const char *>(&e), sizeof(e));
+    }
+    out.write(reinterpret_cast<const char *>(h.data()), h.span() * sizeof(typename View::value_type));
+}
+
+template <typename View>
+bool read_view(std::ifstream & in, View & view, const std::string & label) {
+    uint64_t e[4];
+    for (int r = 0; r < 4; r++) in.read(reinterpret_cast<char *>(&e[r]), sizeof(e[r]));
+    if (!in.good()) return false;
+    view = View(label, e[0], e[1], e[2], e[3]);
+    auto h = Kokkos::create_mirror_view(view);
+    in.read(reinterpret_cast<char *>(h.data()), h.span() * sizeof(typename View::value_type));
+    if (!in.good()) return false;
+    Kokkos::deep_copy(view, h);
+    return true;
+}
+
+} // namespace
+
+uint64_t TENO::cache_key() const {
+    Fnv1a hash;
+    hash.add(sizeof(rtype));
+    hash.add(degree);
+    hash.add(n_stencil_small);
+    hash.add(stencil_factor);
+    hash.add(max_condition);
+    hash.add(mesh->n_cells);
+    hash.add(mesh->n_faces);
+    hash.add(mesh->h_node_coords.data(), mesh->h_node_coords.span() * sizeof(rtype));
+    hash.add(mesh->h_nodes_of_cell.data(), mesh->h_nodes_of_cell.span() * sizeof(uint32_t));
+    hash.add(mesh->h_faces_of_cell.data(), mesh->h_faces_of_cell.span() * sizeof(uint32_t));
+    auto h_face_bc = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), boundaries.face_bc);
+    hash.add(h_face_bc.data(), h_face_bc.span() * sizeof(int32_t));
+    return hash.h;
+}
+
+void TENO::save_cache(const std::string & filename) const {
+    std::ofstream out(filename, std::ios::binary);
+    if (!out.good()) {
+        std::cout << "TENO: could not write cache file " << filename << "." << std::endl;
+        return;
+    }
+    const uint64_t key = cache_key();
+    out.write(TENO_CACHE_MAGIC, sizeof(TENO_CACHE_MAGIC));
+    out.write(reinterpret_cast<const char *>(&key), sizeof(key));
+    write_view(out, scale);
+    write_view(out, basis_mean);
+    write_view(out, stencil_large_size);
+    write_view(out, stencil_large);
+    write_view(out, stencil_large_face);
+    write_view(out, pinv_large);
+    write_view(out, stencil_small_size);
+    write_view(out, stencil_small);
+    write_view(out, stencil_small_face);
+    write_view(out, pinv_small);
+    write_view(out, si_matrix);
+    std::cout << "TENO: wrote stencil cache " << filename << std::endl;
+}
+
+bool TENO::load_cache(const std::string & filename) {
+    std::ifstream in(filename, std::ios::binary);
+    if (!in.good()) return false;
+    char magic[sizeof(TENO_CACHE_MAGIC)];
+    uint64_t key = 0;
+    in.read(magic, sizeof(magic));
+    in.read(reinterpret_cast<char *>(&key), sizeof(key));
+    if (!in.good() || std::string(magic) != TENO_CACHE_MAGIC || key != cache_key()) {
+        std::cout << "TENO: cache " << filename << " does not match this case; recomputing." << std::endl;
+        return false;
+    }
+    const bool ok = read_view(in, scale, "teno_scale") && read_view(in, basis_mean, "teno_basis_mean") &&
+                    read_view(in, stencil_large_size, "teno_stencil_large_size") &&
+                    read_view(in, stencil_large, "teno_stencil_large") &&
+                    read_view(in, stencil_large_face, "teno_stencil_large_face") &&
+                    read_view(in, pinv_large, "teno_pinv_large") &&
+                    read_view(in, stencil_small_size, "teno_stencil_small_size") &&
+                    read_view(in, stencil_small, "teno_stencil_small") &&
+                    read_view(in, stencil_small_face, "teno_stencil_small_face") &&
+                    read_view(in, pinv_small, "teno_pinv_small") && read_view(in, si_matrix, "teno_si_matrix");
+    if (!ok) {
+        std::cout << "TENO: cache " << filename << " is truncated; recomputing." << std::endl;
+        return false;
+    }
+    troubled = Kokkos::View<rtype *>("teno_sigma", mesh->n_cells);
+    std::cout << "TENO: loaded stencil cache " << filename << std::endl;
+    return true;
 }

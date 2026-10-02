@@ -13,6 +13,7 @@
 #include <Kokkos_Core.hpp>
 
 #include <cmath>
+#include <filesystem>
 #include <string>
 #include <tuple>
 
@@ -305,4 +306,41 @@ TEST(TENOTest, MirrorImagesNeverLandInsideNonConvexDomains) {
             EXPECT_FALSE(in_domain) << "cell " << c << " image at " << qx << ", " << qy;
         }
     }
+}
+
+TEST(TENOTest, StencilCacheReproducesPrecomputationAndRejectsOtherMeshes) {
+    const std::string cache = (std::filesystem::temp_directory_path() / "mallard_teno_cache.bin").string();
+    std::filesystem::remove(cache);
+    auto mesh = make_mesh("cartesian_tri", 10, 8);
+    BoundaryData bd = make_uniform_boundaries(*mesh, BoundaryType::SYMMETRY, GAMMA);
+    auto avg = cell_averages(*mesh, smooth_conservatives);
+    Euler euler = Euler::from_reference(GAMMA, 1.0, 1.0, 1.0);
+    Kokkos::View<rtype *[N_CONSERVATIVE]> W("W", mesh->n_cells);
+    auto h_W = Kokkos::create_mirror_view(W);
+    for (uint32_t c = 0; c < mesh->n_cells; c++) {
+        rtype U[N_CONSERVATIVE], Wc[N_CONSERVATIVE];
+        FOR_I_CONSERVATIVE U[i] = avg(c, i);
+        euler.compute_W_from_conservatives(Wc, U);
+        FOR_I_CONSERVATIVE h_W(c, i) = Wc[i];
+    }
+    Kokkos::deep_copy(W, h_W);
+    auto reconstruct = [&](std::shared_ptr<Mesh> m, const BoundaryData & b) {
+        auto teno = make_teno(m, b, 4, "cache_file = \"" + cache + "\"\n");
+        Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_W("face_W", m->n_faces, teno->n_face_quadrature_points());
+        teno->calc_face_values(W, face_W);
+        return Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), face_W);
+    };
+    auto first = reconstruct(mesh, bd);
+    ASSERT_TRUE(std::filesystem::exists(cache));
+    const auto written = std::filesystem::last_write_time(cache);
+    auto second = reconstruct(mesh, bd);
+    EXPECT_EQ(std::filesystem::last_write_time(cache), written);  // Loaded, not rewritten
+    for (size_t i = 0; i < first.span(); i++) EXPECT_EQ(first.data()[i], second.data()[i]);
+
+    // A different mesh must not reuse the cache
+    auto other = make_mesh("cartesian_tri", 10, 8, 1.0, 1.5);
+    BoundaryData bd_other = make_uniform_boundaries(*other, BoundaryType::SYMMETRY, GAMMA);
+    auto teno = make_teno(other, bd_other, 4, "cache_file = \"" + cache + "\"\n");
+    EXPECT_NE(std::filesystem::last_write_time(cache), written);
+    std::filesystem::remove(cache);
 }
