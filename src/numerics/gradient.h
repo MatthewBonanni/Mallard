@@ -194,8 +194,9 @@ void cholesky_solve(const rtype L[N][N], rtype * x) {
  *        faces_of_cell (zero for interior faces).
  */
 struct VertexGradientWeights {
-    Kokkos::View<rtype *[N_DIM]> cells;
-    Kokkos::View<rtype *[N_DIM]> faces;
+    using View = Kokkos::View<rtype *[N_DIM], Kokkos::LayoutRight>;  // A point's weights are read together
+    View cells;
+    View faces;
 };
 
 /**
@@ -321,8 +322,9 @@ inline LSQVertexGradientFunctor make_vertex_gradient(const LSQGradientFunctor & 
                                                      Kokkos::View<uint32_t *> offsets_cells_of_cell,
                                                      Kokkos::View<uint32_t *> cells_of_cell) {
     LSQVertexGradientFunctor functor{faces, offsets_cells_of_cell, cells_of_cell,
-                                     {Kokkos::View<rtype *[N_DIM]>("vertex_gradient_weights_cells", cells_of_cell.extent(0)),
-                                      Kokkos::View<rtype *[N_DIM]>("vertex_gradient_weights_faces", faces.faces_of_cell.extent(0))}};
+                                     {VertexGradientWeights::View("vertex_gradient_weights_cells", cells_of_cell.extent(0)),
+                                      VertexGradientWeights::View("vertex_gradient_weights_faces",
+                                                                  faces.faces_of_cell.extent(0))}};
     Kokkos::parallel_for("vertex_gradient_weights", offsets_cells_of_cell.extent(0) - 1,
                          KOKKOS_LAMBDA(const uint32_t i_cell) { functor.compute_weights(i_cell); });
     return functor;
