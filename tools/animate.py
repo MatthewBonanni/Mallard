@@ -102,6 +102,32 @@ def schlieren(img, valid):
     return np.exp(-6.0 * g)
 
 
+def colorbar_axes(ax):
+    """A thin colorbar to the right of ax that does not shrink it, so that
+    panels with and without colorbars stay the same size."""
+    w = 0.011 / ax.get_position().width
+    return ax.inset_axes([1 + w, 0.0, w, 1.0])
+
+
+def write_gif(frames, gif, fps, width=None):
+    """Looping GIF at full resolution with one palette fitted to the whole
+    animation (ffmpeg palettegen/paletteuse), which avoids the banding and
+    noise of per-frame quantization."""
+    import subprocess
+    import tempfile
+
+    import imageio_ffmpeg
+
+    scale = f"scale={width}:-2:flags=lanczos," if width else ""
+    graph = (f"{scale}split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];"
+             "[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle")
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, frame in enumerate(frames):
+            imageio.imwrite(os.path.join(tmp, f"{i:05d}.png"), frame)
+        subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", "-framerate", str(fps),
+                        "-i", os.path.join(tmp, "%05d.png"), "-vf", graph, "-loop", "0", gif], check=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("series_dir")
@@ -113,16 +139,19 @@ def main():
     ap.add_argument("--subtitle", default="")
     ap.add_argument("--xlim", type=float, nargs=2, default=None, help="Crop the x range")
     ap.add_argument("--ylim", type=float, nargs=2, default=None, help="Crop the y range")
-    ap.add_argument("--every", type=int, default=1, help="Use every n-th snapshot")
+    ap.add_argument("--every", type=int, default=1, help="Use every n-th snapshot, counting back from the last")
     ap.add_argument("--second", default="schlieren",
                     help="Second panel: schlieren (of density) or a variable name, e.g. P")
     ap.add_argument("--interp", choices=["nearest", "linear"], default="nearest",
                     help="Pixel values: the cell's value, or linear interpolation through node averages")
     ap.add_argument("--cmap", default="turbo")
     ap.add_argument("--glob", default="*.vtu", help="Snapshot file pattern within the series directory")
+    ap.add_argument("--dpi", type=int, default=100, help="Frame resolution: frames are 14 inches wide")
+    ap.add_argument("--gif-width", type=int, default=None, help="Downscale the GIF to this width (default: none)")
     args = ap.parse_args()
 
-    files = sorted(glob.glob(os.path.join(args.series_dir, args.glob)))[::args.every]
+    all_files = sorted(glob.glob(os.path.join(args.series_dir, args.glob)))
+    files = all_files[::-1][::args.every][::-1]
     pts, tris, tri_cell, data = read_vtu(files[0])
     cell, valid, extent = pixel_to_cell(pts, tris, tri_cell, args.res, args.xlim, args.ylim)
     raster = Rasterizer(pts, tris, tri_cell, cell, valid, extent, args.interp)
@@ -164,9 +193,10 @@ def main():
         d = read_vtu(f)[3]
         img = field(d)
         if vertical:
-            fig, axs = plt.subplots(2, 1, figsize=(14, 2 * 13 / aspect + 1.6), facecolor="#101014")
+            fig, axs = plt.subplots(2, 1, figsize=(14, 2 * 13 / aspect + 1.6), facecolor="#101014",
+                                    dpi=args.dpi)
         else:
-            fig, axs = plt.subplots(1, 2, figsize=(14, 7.2), facecolor="#101014")
+            fig, axs = plt.subplots(1, 2, figsize=(14, 7.2), facecolor="#101014", dpi=args.dpi)
         for ax in axs:
             ax.set_facecolor("#101014")
             ax.set_xticks([])
@@ -174,13 +204,13 @@ def main():
             for s in ax.spines.values():
                 s.set_visible(False)
         im = axs[0].imshow(img, origin="lower", extent=extent, cmap=args.cmap, vmin=lo, vmax=hi,
-                           interpolation="nearest")
+                           interpolation="antialiased")
         if args.var != "VORTICITY":
             axs[0].contour(np.linspace(extent[0], extent[1], img.shape[1]), np.linspace(extent[2], extent[3], img.shape[0]),
                            gaussian_filter(np.nan_to_num(img, nan=lo), 0.8), levels=contour_levels(img[valid], lo, hi),
                            colors="k", linewidths=0.25, alpha=0.5)
         axs[0].set_title({"RHO": "Density", "P": "Pressure", "VORTICITY": "Vorticity"}.get(args.var, args.var), fontsize=13)
-        cb = fig.colorbar(im, ax=axs[0], fraction=0.046 if not vertical else 0.015, pad=0.01)
+        cb = fig.colorbar(im, cax=colorbar_axes(axs[0]))
         cb.outline.set_visible(False)
         if args.second == "schlieren":
             rho_img = raster(d["RHO"]) if "RHO" in d else img
@@ -192,7 +222,7 @@ def main():
             im2 = axs[1].imshow(second, origin="lower", extent=extent, cmap="cividis",
                                 vmin=second_range[0], vmax=second_range[1], interpolation="bilinear")
             axs[1].set_title({"P": "Pressure", "RHO": "Density"}.get(args.second, args.second), fontsize=13)
-            cb2 = fig.colorbar(im2, ax=axs[1], fraction=0.046 if not vertical else 0.015, pad=0.01)
+            cb2 = fig.colorbar(im2, cax=colorbar_axes(axs[1]))
             cb2.outline.set_visible(False)
         t = d.get("TIME", float("nan"))
         fig.suptitle(f"{args.title}    t = {t:.3f}", fontsize=15, y=0.97)
@@ -201,7 +231,8 @@ def main():
         if vertical:
             fig.subplots_adjust(left=0.02, right=0.93, top=0.9, bottom=0.06, hspace=0.18)
         else:
-            fig.subplots_adjust(left=0.02, right=0.98, top=0.9, bottom=0.06, wspace=0.08)
+            fig.subplots_adjust(left=0.02, right=0.98 if args.second == "schlieren" else 0.93,
+                                top=0.9, bottom=0.06, wspace=0.16)
         fig.canvas.draw()
         frame = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
         plt.close(fig)
@@ -212,8 +243,7 @@ def main():
     frames += [frames[-1]] * args.fps
     imageio.mimwrite(args.output_stem + ".mp4", frames, fps=args.fps, codec="libx264", quality=9,
                      macro_block_size=8)
-    small = [f[::2, ::2] for f in frames]
-    imageio.mimwrite(args.output_stem + ".gif", small, duration=1000 / args.fps, loop=0)
+    write_gif(frames, args.output_stem + ".gif", args.fps, args.gif_width)
     imageio.imwrite(args.output_stem + "_final.png", frames[-1])
     print("wrote", args.output_stem + ".mp4", args.output_stem + ".gif")
 
