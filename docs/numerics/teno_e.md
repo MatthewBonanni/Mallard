@@ -38,3 +38,13 @@ HLL (Davis/Einfeldt speeds) or HLLC, Gauss points per edge, SSPRK3, CFL 0.4.
 ## Test cases in paper
 2D Riemann config 8 (t=0.25) and 16 (t=0.2) on [-0.5,0.5]^2; DMR; sin^2 density advection
 for accuracy (expect design order on uniform triangles).
+
+## Known limitations in Mallard
+
+- Order 5 and up on curved, polygonal boundaries: on the cylinder O-grid
+  (`examples/cylinder`, fine variant with 384 x 128 cells and stretched outer
+  cells) the outermost ring develops a growing odd-even mode along the far
+  field with every far-field condition tried (`upt`, `p_out`, `farfield`).
+  Order 3 and MUSCL are stable there. The likely culprit is the mirror
+  stencil across each face of the polygonal boundary. Use `order = 3` near
+  curved boundaries until this is resolved.
