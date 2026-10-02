@@ -200,6 +200,22 @@ struct BoundaryData {
     }
 
     /**
+     * @brief Ghost state for a point a distance dist outside boundary face
+     *        i_face (the mirror image of an interior point). Under gravity,
+     *        walls and symmetry planes continue the hydrostatic pressure
+     *        gradient instead of mirroring the pressure.
+     */
+    KOKKOS_INLINE_FUNCTION
+    void ghost_W_at(const uint32_t i_face, const rtype * W_i, const rtype * n, const rtype dist,
+                    rtype * W_g) const {
+        ghost_W(i_face, W_i, n, W_g);
+        const BoundaryCondition & bc = bcs(face_bc(i_face));
+        if (bc.is_wall() || bc.type == BoundaryType::SYMMETRY) {
+            W_g[3] += W_i[0] * (gravity[0] * n[0] + gravity[1] * n[1]) * dist;
+        }
+    }
+
+    /**
      * @brief Ghost state for boundary face i_face.
      */
     KOKKOS_INLINE_FUNCTION
