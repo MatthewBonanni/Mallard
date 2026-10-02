@@ -99,14 +99,19 @@ def schlieren(img, valid):
     gy, gx = np.gradient(smooth)
     g = np.hypot(gx, gy)
     g /= np.percentile(g[valid], 99.7) + 1e-30
-    return np.exp(-6.0 * g)
+    return np.where(valid, np.exp(-6.0 * g), np.nan)
+
+
+def mach(d, gamma):
+    return np.hypot(d["U_X"], d["U_Y"]) / np.sqrt(gamma * d["P"] / d["RHO"])
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("series_dir")
     ap.add_argument("output_stem")
-    ap.add_argument("--var", default="RHO")
+    ap.add_argument("--var", default="RHO", help="Cell variable, or VORTICITY or MACH (derived)")
+    ap.add_argument("--gamma", type=float, default=1.4, help="Ratio of specific heats, for MACH")
     ap.add_argument("--res", type=int, default=1000)
     ap.add_argument("--fps", type=int, default=20)
     ap.add_argument("--title", default="2D Riemann problem, configuration 3")
@@ -119,6 +124,8 @@ def main():
     ap.add_argument("--interp", choices=["nearest", "linear"], default="nearest",
                     help="Pixel values: the cell's value, or linear interpolation through node averages")
     ap.add_argument("--cmap", default="turbo")
+    ap.add_argument("--vmin", type=float, help="Color range minimum (default: the series minimum)")
+    ap.add_argument("--vmax", type=float, help="Color range maximum (default: the series maximum)")
     ap.add_argument("--glob", default="*.vtu", help="Snapshot file pattern within the series directory")
     args = ap.parse_args()
 
@@ -139,11 +146,13 @@ def main():
             v = gaussian_filter(np.nan_to_num(raster(d["U_Y"])), 1.0)
             w = np.gradient(v, dx, axis=1) - np.gradient(u, dy, axis=0)
             return np.where(valid, w, np.nan)
+        if args.var == "MACH":
+            return raster(mach(d, args.gamma))
         return raster(d[args.var])
 
     # Fixed color range over the whole series (within the displayed region)
     lo, hi = np.inf, -np.inf
-    for f in files:
+    for f in files if args.vmin is None or args.vmax is None else []:
         img = field(read_vtu(f)[3])
         if args.var == "VORTICITY":
             m = np.nanpercentile(np.abs(img), 99.5)
@@ -152,6 +161,8 @@ def main():
             lo, hi = min(lo, np.nanmin(img)), max(hi, np.nanmax(img))
     if args.var == "VORTICITY":
         lo, hi = -max(-lo, hi), max(-lo, hi)
+    lo = args.vmin if args.vmin is not None else lo
+    hi = args.vmax if args.vmax is not None else hi
     second_range = None
     if args.second != "schlieren":
         vals = [raster(read_vtu(f)[3][args.second]) for f in files[len(files) // 2:]]
@@ -179,7 +190,7 @@ def main():
             axs[0].contour(np.linspace(extent[0], extent[1], img.shape[1]), np.linspace(extent[2], extent[3], img.shape[0]),
                            gaussian_filter(np.nan_to_num(img, nan=lo), 0.8), levels=contour_levels(img[valid], lo, hi),
                            colors="k", linewidths=0.25, alpha=0.5)
-        axs[0].set_title({"RHO": "Density", "P": "Pressure", "VORTICITY": "Vorticity"}.get(args.var, args.var), fontsize=13)
+        axs[0].set_title({"RHO": "Density", "P": "Pressure", "VORTICITY": "Vorticity", "MACH": "Mach number"}.get(args.var, args.var), fontsize=13)
         cb = fig.colorbar(im, ax=axs[0], fraction=0.046 if not vertical else 0.015, pad=0.01)
         cb.outline.set_visible(False)
         if args.second == "schlieren":
