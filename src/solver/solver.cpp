@@ -261,7 +261,9 @@ int Solver::run() {
     std::cout << LOG_SEPARATOR << std::endl;
     std::cout << "Running solver..." << std::endl;
     copy_device_to_host();
-    write_data(true);
+    if (step == 0) {
+        write_data(true);
+    }
     while (!done()) {
         calc_dt();
         take_step();
