@@ -11,6 +11,8 @@
 
 #include "data_writer.h"
 
+#include "input.h"
+
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -41,7 +43,7 @@ void DataWriter::init(const toml::value & input,
             throw std::runtime_error("DataWriter: interval must be positive.");
         }
     } else {
-        time_interval = toml::find<rtype>(input, "time_interval");
+        time_interval = find_real(input, "time_interval");
         if (!(time_interval > 0.0)) {
             throw std::runtime_error("DataWriter: time_interval must be positive.");
         }

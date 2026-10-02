@@ -11,6 +11,8 @@
 
 #include "boundary.h"
 
+#include "input.h"
+
 #include <stdexcept>
 #include <vector>
 
@@ -34,22 +36,22 @@ BoundaryCondition BoundaryCondition::from_input(const toml::value & input, const
         require("u");
         require("p");
         require("T");
-        std::vector<rtype> u = toml::find<std::vector<rtype>>(input, "u");
+        std::vector<rtype> u = find_real_vector(input, "u");
         if (u.size() != N_DIM) {
             throw std::runtime_error("Invalid u for boundary: " + name + ".");
         }
-        const rtype p = toml::find<rtype>(input, "p");
-        const rtype T = toml::find<rtype>(input, "T");
+        const rtype p = find_real(input, "p");
+        const rtype T = find_real(input, "T");
         bc.data[0] = physics.get_density_from_pressure_temperature(p, T);
         bc.data[1] = u[0];
         bc.data[2] = u[1];
         bc.data[3] = p;
     } else if (bc.type == BoundaryType::P_OUT || bc.type == BoundaryType::P_OUT_AVERAGE) {
         require("p");
-        bc.data[3] = toml::find<rtype>(input, "p");
+        bc.data[3] = find_real(input, "p");
     } else if (bc.is_wall()) {
         if (input.contains("u")) {
-            std::vector<rtype> u = toml::find<std::vector<rtype>>(input, "u");
+            std::vector<rtype> u = find_real_vector(input, "u");
             if (u.size() != N_DIM) {
                 throw std::runtime_error("Invalid u for boundary: " + name + ".");
             }
@@ -58,10 +60,10 @@ BoundaryCondition BoundaryCondition::from_input(const toml::value & input, const
         }
         if (bc.type == BoundaryType::WALL_ISOTHERMAL) {
             require("T");
-            bc.data[0] = toml::find<rtype>(input, "T");
+            bc.data[0] = find_real(input, "T");
         } else if (bc.type == BoundaryType::WALL_HEAT_FLUX) {
             require("q");
-            bc.data[3] = toml::find<rtype>(input, "q");
+            bc.data[3] = find_real(input, "q");
         }
     }
     return bc;
