@@ -175,6 +175,8 @@ void Solver::init_sources() {
         }
         has_gravity = true;
         FOR_I_DIM gravity[i] = g[i];
+        FOR_I_DIM boundary_data.gravity[i] = g[i];
+        face_reconstruction->set_boundaries(boundary_data);
         std::cout << "> Gravity: [" << gravity[0] << ", " << gravity[1] << "]" << std::endl;
     }
     const bool any_expression = source.contains("rho") || source.contains("rhou") || source.contains("rhoE");
