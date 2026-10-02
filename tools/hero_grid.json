@@ -2,7 +2,7 @@
  "width": 6,
  "dpi": 300,
  "fps": 15,
- "footer": "Mallard  |  TENO5-E finite volume  |  1.8M and 980k triangles, 500k quads  |  Euler and Navier-Stokes",
+ "footer": "Mallard  |  TENO5-E finite volume  |  1.8M triangles, 1M and 500k quads  |  Euler and Navier-Stokes",
  "rows": [
   [
    {
@@ -16,7 +16,7 @@
   ],
   [
    {
-    "series": "examples/riemann_2d/solut",
+    "series": "examples/riemann_2d_quads/solut",
     "title": "2D Riemann problem"
    },
    {
