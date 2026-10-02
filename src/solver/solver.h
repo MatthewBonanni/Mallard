@@ -179,7 +179,7 @@ class Solver {
         bool halo_too_shallow();
 
         template <typename T_riemann_solver>
-        void launch_flux_functor(StateView rhs);
+        void launch_flux_functor();
 
         toml::value input;
 
@@ -213,6 +213,7 @@ class Solver {
         // Work arrays
         Kokkos::View<rtype *[N_CONSERVATIVE]> W_cells;
         Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution;
+        Kokkos::View<rtype *[N_CONSERVATIVE]> face_flux;
         Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]> viscous_gradients;
         LSQVertexGradientFunctor viscous_gradient;  // Fills viscous_gradients from W_cells
         Kokkos::View<rtype *> cfl_local;
