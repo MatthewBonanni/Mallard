@@ -134,7 +134,8 @@ struct ViscousFluxFunctor {
             } else if (bc.type == BoundaryType::SYMMETRY) {
                 symmetry = true;
             } else if (bc.type == BoundaryType::EXTRAPOLATION || bc.type == BoundaryType::P_OUT ||
-                       bc.type == BoundaryType::P_OUT_AVERAGE || bc.type == BoundaryType::FARFIELD) {
+                       bc.type == BoundaryType::P_OUT_AVERAGE || bc.type == BoundaryType::FARFIELD ||
+                       bc.type == BoundaryType::PARTITION) {
                 // Zero normal derivatives across transmissive and outflow boundaries
                 for (uint8_t k = 0; k < NQ; k++) {
                     const rtype g_n = dot<N_DIM>(g_f[k], n);
