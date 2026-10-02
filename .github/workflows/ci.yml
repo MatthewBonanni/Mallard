@@ -42,12 +42,28 @@ jobs:
       - name: Install HDF5
         if: matrix.backend.hdf5
         run: sudo apt-get update -qq && sudo apt-get install -y -qq libhdf5-dev
+      - name: Install ccache
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ccache
+      - name: Compiler cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-${{ matrix.backend.name }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.backend.name }}-
       - name: Configure
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
         run: >
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DUSE_SYSTEM_KOKKOS=OFF ${{ matrix.backend.flags }}
       - name: Build
-        run: cmake --build build -j $(nproc)
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+          CCACHE_MAXSIZE: 500M
+        run: |
+          cmake --build build -j $(nproc)
+          ccache --show-stats
       - name: Test
         if: ${{ !matrix.backend.mpi }}
         env:
