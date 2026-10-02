@@ -199,7 +199,7 @@ def main():
         if args.subtitle:
             fig.text(0.5, 0.025, args.subtitle, ha="center", fontsize=10, color="#9a9a9a")
         if vertical:
-            fig.subplots_adjust(left=0.02, right=0.98, top=0.9, bottom=0.06, hspace=0.18)
+            fig.subplots_adjust(left=0.02, right=0.93, top=0.9, bottom=0.06, hspace=0.18)
         else:
             fig.subplots_adjust(left=0.02, right=0.98, top=0.9, bottom=0.06, wspace=0.08)
         fig.canvas.draw()
