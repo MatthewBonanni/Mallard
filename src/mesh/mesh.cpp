@@ -10,6 +10,7 @@
  */
 
 #include "mesh.h"
+#include "mesh_block.h"
 
 #include "input.h"
 
@@ -373,18 +374,11 @@ void Mesh::copy_device_to_host() {
 void Mesh::init_box(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, bool triangles, bool wedge) {
     const rtype dx = Lx / nx;
     const rtype dy = Ly / ny;
-    const rtype wedge_theta = 8 * Kokkos::numbers::pi / 180.0;
-    const rtype wedge_x = 0.5;
     std::vector<std::array<rtype, N_DIM>> nodes;
     for (uint32_t i = 0; i < nx + 1; ++i) {
         for (uint32_t j = 0; j < ny + 1; ++j) {
-            const rtype x = i * dx;
-            rtype y = j * dy;
-            if (wedge && x > wedge_x) {
-                const rtype y_bottom = (x - wedge_x) * tan(wedge_theta);
-                y = (y / Ly) * (Ly - y_bottom) + y_bottom;
-            }
-            nodes.push_back({x, y});
+            const std::array<rtype, 2> x = {i * dx, j * dy};
+            nodes.push_back(wedge ? wedge_node(x[0], x[1], Ly) : x);
         }
     }
     auto node = [&](uint32_t i, uint32_t j) { return i * (ny + 1) + j; };

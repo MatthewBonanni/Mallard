@@ -5,6 +5,7 @@ set(MALLARD_TEST_SOURCES
     common_math_test.cpp
     time_integrator_test.cpp
     comm_test.cpp
+    mesh_block_test.cpp
 )
 if(Mallard_DIM EQUAL 2)
     list(APPEND MALLARD_TEST_SOURCES
@@ -32,6 +33,7 @@ else()
     gradient3d_test.cpp
     solver3d_test.cpp
     io3d_test.cpp
+    mpi3d_test.cpp
     )
 endif()
 add_executable(MallardTest ${MALLARD_TEST_SOURCES})

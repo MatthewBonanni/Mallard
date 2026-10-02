@@ -100,6 +100,8 @@ void cell_tetrahedra(const std::vector<std::array<double, 3>> & nodes,
                      std::vector<std::array<std::array<double, 3>, 4>> & tets);
 
 
+struct MeshBlock;
+
 class Mesh {
     public:
         /**
@@ -311,8 +313,14 @@ class Mesh {
                                     const std::vector<BoundaryFace> & boundary_faces);
 
         /**
-         * @brief Read an ASCII Gmsh mesh (format 2.2 or 4.1). Named physical
-         *        curves become boundary zones.
+         * @brief Build the mesh from a block holding the whole mesh.
+         */
+        void init_from_block(const MeshBlock & block);
+
+        /**
+         * @brief Read a Mallard HDF5 mesh file (.h5, .hdf5), or an ASCII Gmsh
+         *        mesh (format 2.2 or 4.1) whose named physical curves (surfaces
+         *        in 3D) become boundary zones.
          */
         void init_file(const std::string & filename);
 
@@ -342,6 +350,9 @@ class Mesh {
         // Cells [0, n_reconstructed()) need face values: owned cells and halo layer 1
         uint32_t n_reconstructed_cells = 0;
         uint32_t n_reconstructed() const { return n_reconstructed_cells ? n_reconstructed_cells : n_cells; }
+        // Cells [0, n_complete()) have all their vertex neighbors: all but the outermost halo layer
+        uint32_t n_complete_cells = 0;
+        uint32_t n_complete() const { return n_complete_cells ? n_complete_cells : n_cells; }
         // Distributed runs: global id of every local cell and the global cell count (0 otherwise)
         std::vector<uint64_t> h_global_cell_id;
         uint64_t n_global_cells = 0;

@@ -133,6 +133,8 @@ std::shared_ptr<Mesh> build_local_mesh(Mesh & global, const std::vector<int> & o
     local->init_from_connectivity(nodes, cells, boundary_faces);
     local->n_owned_cells = dist.n_owned;
     local->n_reconstructed_cells = std::count_if(dist.layer.begin(), dist.layer.end(), [](uint8_t l) { return l <= 1; });
+    local->n_complete_cells =
+        std::count_if(dist.layer.begin(), dist.layer.end(), [&](uint8_t l) { return l < halo_layers; });
 
     // Exchange plan: ask each owner for the halo cells it owns; the requests
     // received become the send lists
