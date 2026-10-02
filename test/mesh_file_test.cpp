@@ -21,6 +21,7 @@
 
 #include "comm.h"
 #include "mesh_block.h"
+#include "periodic_fixtures.h"
 #include "test_fixtures.h"
 #include "solver.h"
 
@@ -295,3 +296,24 @@ TEST_P(MixedMesh, BlastInClosedBoxConservesMassAndEnergy) {
 }
 
 INSTANTIATE_TEST_SUITE_P(MeshFile, MixedMesh, ::testing::Values("FO", "MUSCL", "TENO"));
+
+TEST(MeshFileTest, PeriodicZonePairsJoinAJitteredGmshMesh) {
+    // Zones of a mesh file paired by [[periodic]] join into interior faces;
+    // the fully periodic box conserves momentum too
+    const std::string file = write_temp("mallard_jitter_periodic.msh", jittered_mixed_mesh(12));
+    std::string input = file_mesh_input(file, "TENO",
+        "type = \"analytical\"\nrho = \"1.0 + 0.3 * exp(-30 * ((x - 0.3)^2 + (y - 0.6)^2))\"\n"
+        "u = [\"0.7\", \"-0.4\"]\np = \"1.0\"\n", "symmetry", "n_steps = 15\ncfl = 0.5\n");
+    input = input.substr(0, input.find("[[boundaries]]")) + input.substr(input.find("[numerics]"));
+    input += "[[periodic]]\nzones = [\"left\", \"right\"]\ntranslation = [1.0, 0.0]\n"
+             "[[periodic]]\nzones = [\"bottom\", \"top\"]\ntranslation = [0.0, 1.0]\n";
+    Solver solver;
+    solver.init(parse_toml(input));
+    const Mesh & mesh = *solver.get_mesh();
+    for (uint32_t f = 0; f < mesh.n_faces; f++) EXPECT_GE(mesh.h_cells_of_face(f, 1), 0);
+    expect_shifts_join_cells(mesh);
+    const auto before = solver.integrate_conservatives();
+    solver.run();
+    const auto after = solver.integrate_conservatives();
+    FOR_I_CONSERVATIVE EXPECT_NEAR(after[i], before[i], 1e-12) << "variable " << int(i);
+}
