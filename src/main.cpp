@@ -4,8 +4,6 @@
  * @version 0.1
  * @date 2023-12-17
  * 
- * @mainpage Mallard
- * 
  * @copyright Copyright (c) 2023 Matthew Bonanni
  */
 
@@ -13,6 +11,7 @@
 
 #include <Kokkos_Core.hpp>
 
+#include "parallel/comm.h"
 #include "solver/solver.h"
 
 /**
@@ -43,10 +42,15 @@ int main(int argc, char* argv[]) {
 
     int status = 0;
 
-    // Initialize Kokkos
+    // MPI before Kokkos, so Kokkos can map each rank to its own device
+    comm::Session session(argc, argv);
+    // Only rank 0 logs
+    if (!comm::is_root()) std::cout.rdbuf(nullptr);
+
     Kokkos::initialize(argc, argv);
     {
 
+    std::cout << "MPI ranks: " << comm::size() << std::endl;
     std::cout << "The default execution space is: "
               << typeid(Kokkos::DefaultExecutionSpace).name() << std::endl;
     std::cout << "This space has concurrency: "
@@ -61,14 +65,12 @@ int main(int argc, char* argv[]) {
     status = solver.init(inputFileName);
     if (status != 0) {
         std::cerr << "Error: Solver initialization failed." << std::endl;
-        return status;
-    }
-
-    // Run solver
-    status = solver.run();
-    if (status != 0) {
-        std::cerr << "Error: Solver run failed." << std::endl;
-        return status;
+    } else {
+        // Run solver
+        status = solver.run();
+        if (status != 0) {
+            std::cerr << "Error: Solver run failed." << std::endl;
+        }
     }
 
     }

@@ -28,11 +28,10 @@
 #include "physics.h"
 #include "data_writer.h"
 #include "expression.h"
+#include "comm.h"
+#include "distribution.h"
+#include "halo_exchange.h"
 
-/**
- * @brief Faces with a Dirichlet condition and the expressions of x, y, t
- *        for their exterior state W = [rho, u_x, u_y, p].
- */
 struct ForceMonitor {
     std::string zone;
     Kokkos::View<uint32_t *> faces;
@@ -40,6 +39,10 @@ struct ForceMonitor {
     std::shared_ptr<std::ofstream> out;
 };
 
+/**
+ * @brief Faces with a Dirichlet condition and the expressions of x, y, z, t
+ *        for their exterior state W = [rho, u, p].
+ */
 struct DirichletBoundary {
     std::vector<uint32_t> faces;
     std::vector<Expression> W;
@@ -117,6 +120,15 @@ class Solver {
         void calc_dt();
         void check_fields();
 
+        /**
+         * @brief Whether a run on several ranks splits the mesh between them
+         *        (default). Call before init(); tests turn it off to get a
+         *        serial reference on every rank.
+         */
+        void set_distributed(bool on) { distribute = on; }
+        bool is_distributed() const { return distribute && comm::size() > 1; }
+        const Distribution & get_distribution() const { return distribution; }
+
         rtype get_time() const { return t; }
         uint32_t get_step() const { return step; }
         const Euler & get_physics() const { return physics; }
@@ -137,6 +149,14 @@ class Solver {
         void init_solution();
         void init_solution_constant();
         void init_solution_analytical();
+
+        /**
+         * @brief Set the cell averages of a 3D mesh from point values f(x, y, z, cons)
+         *        by integrating over the tetrahedra of each cell.
+         * @param n_sub Subdivisions per direction of the Duffy cube of each tetrahedron.
+         * @param f Conservative variables at a point.
+         */
+        void init_cell_averages_3d(uint32_t n_sub, const std::function<void(double, double, double, rtype *)> & f);
         void init_solution_restart();
         void update_boundary_states(rtype t_eval);
         void init_sources();
@@ -150,6 +170,14 @@ class Solver {
         void write_forces();
 
     private:
+        bool distribute = true;
+        int halo_layers = 0;
+        Distribution distribution;
+        HaloExchange halo;
+
+        int base_halo_layers() const;
+        bool halo_too_shallow();
+
         template <typename T_riemann_solver>
         void launch_flux_functor(StateView rhs);
 
@@ -195,7 +223,7 @@ class Solver {
 
         // Source terms
         bool has_gravity = false;
-        rtype gravity[N_DIM] = {0.0, 0.0};
+        rtype gravity[N_DIM] = {};
         std::vector<Expression> source_expressions;  // Per conservative variable, empty if none
         bool source_time_dependent = false;
         StateView source_field;

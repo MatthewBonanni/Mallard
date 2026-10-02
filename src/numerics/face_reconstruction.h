@@ -100,7 +100,20 @@ class FaceReconstruction {
         virtual void calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                                       Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution) = 0;
         
+        /**
+         * @brief Set up per-face quadrature (3D): Dunavant rules on triangles and
+         *        Gauss rules mapped bilinearly onto quadrilaterals, exact for
+         *        polynomials of the given degree on planar faces (degree <= 1
+         *        uses the face centroid). Also maps each quadrature point of a
+         *        transmissive boundary face to the matching point of its image
+         *        face (BoundaryData::face_image_quad).
+         * @param degree Polynomial degree to integrate exactly.
+         */
+        void init_face_quadrature_3d(uint8_t degree);
+
         Quadrature quadrature_face;
+        Kokkos::View<rtype ***> face_quad_points;   // 3D: (face, q, dim)
+        Kokkos::View<rtype **> face_quad_weights;   // 3D: (face, q), sum 2 per face, zero on padding
     protected:
         FaceReconstructionType type;
         std::shared_ptr<Mesh> mesh;
@@ -229,6 +242,9 @@ class TENO : public FaceReconstruction {
         Kokkos::View<rtype ***> troubled_coeffs;           // (cell, l, var): scratch for the troubled pass
         Kokkos::View<uint32_t *> troubled_cells;           // queue of troubled cells
         Kokkos::View<uint32_t> n_troubled;
+        // Vertex-neighbor layers each cell's stencil search visited (host); a
+        // distributed run needs this many complete layers around the cell
+        std::vector<uint8_t> gather_depth;
 
     private:
         template <uint8_t DEG>
@@ -236,6 +252,7 @@ class TENO : public FaceReconstruction {
                                    Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution);
 
         void compute_stencils_and_matrices();
+        void compute_stencils_and_matrices_3d();
         uint64_t cache_key() const;
         void save_cache(const std::string & filename) const;
         bool load_cache(const std::string & filename);

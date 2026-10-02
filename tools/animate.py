@@ -9,11 +9,10 @@ works for any mesh (triangles, quads, mixed).
 import argparse
 import glob
 import os
-import subprocess
+import shutil
 import tempfile
 
 import imageio.v2 as imageio
-import imageio_ffmpeg
 import matplotlib
 
 matplotlib.use("Agg")
@@ -102,34 +101,42 @@ def schlieren(img, valid):
     gy, gx = np.gradient(smooth)
     g = np.hypot(gx, gy)
     g /= np.percentile(g[valid], 99.7) + 1e-30
-    return np.where(valid, np.exp(-6.0 * g), np.nan)
+    return np.exp(-6.0 * g)
 
 
 def mach(d, gamma):
     return np.hypot(d["U_X"], d["U_Y"]) / np.sqrt(gamma * d["P"] / d["RHO"])
 
 
-def write_video(stem, frames, fps, gif_every, gif_width, frames_dir=None):
-    """H.264 MP4 of all frames, and a two-pass ffmpeg GIF (palette tuned to the
-    moving parts, no dithering) of every gif_every-th frame."""
-    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
-    with tempfile.TemporaryDirectory() as tmp:
-        if frames_dir:
-            os.makedirs(frames_dir, exist_ok=True)
-            tmp = frames_dir
-        for i, frame in enumerate(frames):
-            imageio.imwrite(os.path.join(tmp, f"{i:05d}.png"), frame)
-        pattern = os.path.join(tmp, "%05d.png")
-        subprocess.run([ffmpeg, "-v", "error", "-y", "-framerate", str(fps), "-i", pattern,
-                        "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2", "-c:v", "libx264", "-crf", "18",
-                        "-pix_fmt", "yuv420p", "-movflags", "+faststart", stem + ".mp4"], check=True)
-        select = f"select='not(mod(n\\,{gif_every}))',scale={gif_width}:-1:flags=lanczos"
-        palette = os.path.join(tmp, "palette.png")
-        subprocess.run([ffmpeg, "-v", "error", "-y", "-i", pattern, "-vf",
-                        f"{select},palettegen=stats_mode=diff", palette], check=True)
-        subprocess.run([ffmpeg, "-v", "error", "-y", "-i", pattern, "-i", palette, "-lavfi",
-                        f"{select},setpts=N/({fps / gif_every}*TB)[x];[x][1:v]paletteuse=dither=none:diff_mode=rectangle",
-                        "-r", str(fps / gif_every), "-loop", "0", stem + ".gif"], check=True)
+def colorbar_axes(ax):
+    """A thin colorbar to the right of ax that does not shrink it, so that
+    panels with and without colorbars stay the same size."""
+    w = 0.011 / ax.get_position().width
+    return ax.inset_axes([1 + w, 0.0, w, 1.0])
+
+
+def ffmpeg(*args):
+    import subprocess
+
+    import imageio_ffmpeg
+
+    subprocess.run([imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error", *args], check=True)
+
+
+def write_mp4(pattern, mp4, fps):
+    """H.264 for the web: yuv420p, even dimensions, metadata up front."""
+    ffmpeg("-framerate", str(fps), "-i", pattern, "-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2",
+           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18", "-movflags", "+faststart", mp4)
+
+
+def write_gif(pattern, gif, fps, width=None):
+    """Looping GIF with one palette fitted to the whole animation
+    (palettegen/paletteuse), which avoids the banding and noise of per-frame
+    quantization."""
+    scale = f"scale={width}:-2:flags=lanczos," if width else ""
+    graph = (f"{scale}split[a][b];[a]palettegen=max_colors=256:stats_mode=full[p];"
+             "[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle")
+    ffmpeg("-framerate", str(fps), "-i", pattern, "-vf", graph, "-loop", "0", gif)
 
 
 def main():
@@ -144,7 +151,7 @@ def main():
     ap.add_argument("--subtitle", default="")
     ap.add_argument("--xlim", type=float, nargs=2, default=None, help="Crop the x range")
     ap.add_argument("--ylim", type=float, nargs=2, default=None, help="Crop the y range")
-    ap.add_argument("--every", type=int, default=1, help="Use every n-th snapshot")
+    ap.add_argument("--every", type=int, default=1, help="Use every n-th snapshot, counting back from the last")
     ap.add_argument("--second", default="schlieren",
                     help="Second panel: schlieren (of density) or a variable name, e.g. P")
     ap.add_argument("--interp", choices=["nearest", "linear"], default="nearest",
@@ -153,25 +160,26 @@ def main():
     ap.add_argument("--vmin", type=float, help="Color range minimum (default: the series minimum)")
     ap.add_argument("--vmax", type=float, help="Color range maximum (default: the series maximum)")
     ap.add_argument("--glob", default="*.vtu", help="Snapshot file pattern within the series directory")
+    ap.add_argument("--width", type=float, default=14.0, help="Figure width in inches; text scales with it")
+    ap.add_argument("--dpi", type=int, default=100)
     ap.add_argument("--layout", choices=["auto", "stacked", "side", "single"], default="auto",
                     help="Panel arrangement; auto stacks wide domains, single shows only the first panel")
     ap.add_argument("--overlay", action="store_true", help="Shade the first panel with the density schlieren")
     ap.add_argument("--body-color", default="#101014", help="Color of regions outside the mesh (bodies)")
-    ap.add_argument("--dpi", type=int, default=100, help="Frame resolution")
-    ap.add_argument("--fig-width", type=float, default=14.0,
-                    help="Figure width in inches; text and lines scale with it, so the layout is unchanged")
-    ap.add_argument("--gif-width", type=int, default=None, help="GIF width in pixels (default: the frame width)")
-    ap.add_argument("--gif-every", type=int, default=1, help="Use every n-th frame in the GIF (the MP4 has all)")
+    ap.add_argument("--gif-every", type=int, default=1,
+                    help="The GIF uses every n-th frame, counting back from the last (the MP4 uses all)")
+    ap.add_argument("--gif-fps", type=int, default=None, help="GIF frame rate (default: --fps)")
+    ap.add_argument("--gif-width", type=int, default=None, help="Downscale the GIF to this width (default: none)")
     ap.add_argument("--frames-dir", help="Keep the PNG frames in this directory")
     args = ap.parse_args()
 
-    files = sorted(glob.glob(os.path.join(args.series_dir, args.glob)))[::args.every]
+    all_files = sorted(glob.glob(os.path.join(args.series_dir, args.glob)))
+    files = all_files[::-1][::args.every][::-1]
     pts, tris, tri_cell, data = read_vtu(files[0])
     cell, valid, extent = pixel_to_cell(pts, tris, tri_cell, args.res, args.xlim, args.ylim)
     raster = Rasterizer(pts, tris, tri_cell, cell, valid, extent, args.interp)
     aspect = (extent[1] - extent[0]) / (extent[3] - extent[2])
     layout = args.layout if args.layout != "auto" else ("stacked" if aspect > 1.8 else "side")
-    vertical = layout == "stacked"
 
     dx = (extent[1] - extent[0]) / (cell.shape[1] - 1)
     dy = (extent[3] - extent[2]) / (cell.shape[0] - 1)
@@ -205,21 +213,25 @@ def main():
         vals = [raster(read_vtu(f)[3][args.second]) for f in files[len(files) // 2:]]
         second_range = (np.nanpercentile(vals, 0.5), np.nanpercentile(vals, 99.5))
 
-    k = args.fig_width / 14
-    plt.rcParams.update({"font.size": 10 * k, "xtick.major.size": 3.5 * k, "ytick.major.size": 3.5 * k,
-                         "xtick.major.width": 0.8 * k, "ytick.major.width": 0.8 * k, "font.family": "DejaVu Sans", "text.color": "#e8e8e8",
+    k = args.width / 14.0
+    plt.rcParams.update({"font.family": "DejaVu Sans", "font.size": 10 * k, "text.color": "#e8e8e8",
                          "axes.labelcolor": "#e8e8e8", "xtick.color": "#9a9a9a", "ytick.color": "#9a9a9a"})
-    frames = []
+    if args.frames_dir:
+        os.makedirs(args.frames_dir, exist_ok=True)
+    tmp = tempfile.TemporaryDirectory(dir=args.frames_dir)
+    frame_dir = args.frames_dir or tmp.name
+    frame_files = []
     for f in files:
         d = read_vtu(f)[3]
         img = field(d)
         if layout == "single":
-            fig, ax = plt.subplots(figsize=(14 * k, (12.6 / aspect + 1.0) * k), dpi=args.dpi, facecolor="#101014")
+            fig, ax = plt.subplots(figsize=(14 * k, (12.6 / aspect + 1.0) * k), facecolor="#101014", dpi=args.dpi)
             axs = [ax]
-        elif vertical:
-            fig, axs = plt.subplots(2, 1, figsize=(14 * k, (2 * 13 / aspect + 1.6) * k), dpi=args.dpi, facecolor="#101014")
+        elif layout == "stacked":
+            fig, axs = plt.subplots(2, 1, figsize=(14 * k, (2 * 13 / aspect + 1.6) * k), facecolor="#101014",
+                                    dpi=args.dpi)
         else:
-            fig, axs = plt.subplots(1, 2, figsize=(14 * k, 7.2 * k), dpi=args.dpi, facecolor="#101014")
+            fig, axs = plt.subplots(1, 2, figsize=(14 * k, 7.2 * k), facecolor="#101014", dpi=args.dpi)
         for ax in axs:
             ax.set_facecolor(args.body_color)
             ax.set_xticks([])
@@ -227,11 +239,11 @@ def main():
             for s in ax.spines.values():
                 s.set_visible(False)
         im = axs[0].imshow(img, origin="lower", extent=extent, cmap=args.cmap, vmin=lo, vmax=hi,
-                           interpolation="nearest")
+                           interpolation="antialiased")
         if args.overlay:
-            shade = schlieren(raster(d["RHO"]), valid)
+            shade = np.nan_to_num(schlieren(raster(d["RHO"]), valid), nan=1.0)
             rgba = plt.get_cmap(args.cmap)(np.clip((img - lo) / (hi - lo), 0, 1))
-            rgba[..., :3] *= (0.15 + 0.85 * np.nan_to_num(shade, nan=1.0))[..., None]
+            rgba[..., :3] *= (0.15 + 0.85 * shade)[..., None]
             rgba[..., 3] = valid
             im.set_visible(False)
             axs[0].imshow(rgba, origin="lower", extent=extent, interpolation="bilinear")
@@ -240,7 +252,7 @@ def main():
                            gaussian_filter(np.nan_to_num(img, nan=lo), 0.8), levels=contour_levels(img[valid], lo, hi),
                            colors="k", linewidths=0.25 * k, alpha=0.5)
         name = {"RHO": "Density", "P": "Pressure", "VORTICITY": "Vorticity", "MACH": "Mach number"}.get(args.var, args.var)
-        cb = fig.colorbar(im, ax=axs[0], fraction=0.046 if layout == "side" else 0.015, pad=0.01)
+        cb = fig.colorbar(im, cax=colorbar_axes(axs[0]))
         cb.outline.set_visible(False)
         if layout == "single":
             cb.set_label(name, fontsize=12 * k)
@@ -250,7 +262,7 @@ def main():
             pass
         elif args.second == "schlieren":
             rho_img = raster(d["RHO"]) if "RHO" in d else img
-            axs[1].imshow(schlieren(rho_img, valid), origin="lower", extent=extent, cmap="bone", vmin=0, vmax=1,
+            axs[1].imshow(np.where(valid, schlieren(rho_img, valid), np.nan), origin="lower", extent=extent, cmap="bone", vmin=0, vmax=1,
                           interpolation="bilinear")
             axs[1].set_title("Numerical schlieren", fontsize=13 * k)
         else:
@@ -258,29 +270,41 @@ def main():
             im2 = axs[1].imshow(second, origin="lower", extent=extent, cmap="cividis",
                                 vmin=second_range[0], vmax=second_range[1], interpolation="bilinear")
             axs[1].set_title({"P": "Pressure", "RHO": "Density"}.get(args.second, args.second), fontsize=13 * k)
-            cb2 = fig.colorbar(im2, ax=axs[1], fraction=0.046 if not vertical else 0.015, pad=0.01)
+            cb2 = fig.colorbar(im2, cax=colorbar_axes(axs[1]))
             cb2.outline.set_visible(False)
         t = d.get("TIME", float("nan"))
         fig.suptitle(f"{args.title}    t = {t:.3f}", fontsize=15 * k, y=0.97)
         if args.subtitle:
             fig.text(0.5, 0.025, args.subtitle, ha="center", fontsize=10 * k, color="#9a9a9a")
         if layout == "single":
-            fig.subplots_adjust(left=0.01, right=0.95, top=1 - 0.7 * k / fig.get_figheight(),
+            fig.subplots_adjust(left=0.01, right=0.93, top=1 - 0.7 * k / fig.get_figheight(),
                                 bottom=0.3 * k / fig.get_figheight())
-        elif vertical:
+        elif layout == "stacked":
             fig.subplots_adjust(left=0.02, right=0.93, top=0.9, bottom=0.06, hspace=0.18)
         else:
-            fig.subplots_adjust(left=0.02, right=0.98, top=0.9, bottom=0.06, wspace=0.08)
+            fig.subplots_adjust(left=0.02, right=0.98 if args.second == "schlieren" else 0.93,
+                                top=0.9, bottom=0.06, wspace=0.16)
         fig.canvas.draw()
         frame = np.asarray(fig.canvas.buffer_rgba())[..., :3].copy()
         plt.close(fig)
-        frames.append(frame)
+        frame_files.append(os.path.join(frame_dir, f"frame_{len(frame_files):05d}.png"))
+        imageio.imwrite(frame_files[-1], frame)
         print(f"rendered {os.path.basename(f)} (t = {t:.3f})", flush=True)
 
-    # Hold the final frame for a moment
-    frames += [frames[-1]] * args.fps
-    write_video(args.output_stem, frames, args.fps, args.gif_every, args.gif_width or frames[0].shape[1], args.frames_dir)
-    imageio.imwrite(args.output_stem + "_final.png", frames[-1])
+    # Both animations hold the final frame for a second
+    gif_fps = args.gif_fps or args.fps
+    for name, chosen, fps in [("mp4", frame_files, args.fps),
+                              ("gif", frame_files[::-1][::args.gif_every][::-1], gif_fps)]:
+        seq = chosen + [chosen[-1]] * fps
+        for i, src in enumerate(seq):
+            os.link(src, os.path.join(tmp.name, f"{name}_{i:05d}.png"))
+        pattern = os.path.join(tmp.name, f"{name}_%05d.png")
+        if name == "mp4":
+            write_mp4(pattern, args.output_stem + ".mp4", fps)
+        else:
+            write_gif(pattern, args.output_stem + ".gif", fps, args.gif_width)
+    shutil.copy(frame_files[-1], args.output_stem + "_final.png")
+    tmp.cleanup()
     print("wrote", args.output_stem + ".mp4", args.output_stem + ".gif")
 
 
