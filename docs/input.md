@@ -54,9 +54,10 @@ zone named after it (`physical_<tag>` if unnamed); boundary faces not in any
 such group form the zone `unassigned`. Elements of other dimensions (points,
 and curves in 3D) are ignored, and higher-order elements are rejected.
 
-Large meshes should be converted to Mallard's HDF5 mesh format (builds with
-`-DMallard_ENABLE_HDF5=ON`), which every rank of a distributed run reads only
-its share of:
+In a distributed run every rank reads a Gmsh file whole (keeping only its
+share), so large meshes should be converted to Mallard's HDF5 mesh format
+(builds with `-DMallard_ENABLE_HDF5=ON`), of which each rank reads only its
+share; generated meshes are also produced per rank:
 
 ```sh
 mallard-mesh-convert mesh.msh mesh.h5               # from Gmsh
@@ -121,6 +122,7 @@ the zone's faces whose centers satisfy the expression.
 | `riemann_solver` | `Rusanov`, `HLL`, `HLLC` (default), `Roe`, or `RHLL` (rotated hybrid HLL-Roe, carbuncle-free) |
 | `time_integrator` | `FE`, `SSPRK3` (default) or `RK4` |
 | `check_nan` | Stop if the solution becomes non-finite |
+| `low_mach_cutoff` | Low-Mach correction of the convective flux: the velocity jump across each interior face is scaled by `z = min(1, max(M_L, M_R, low_mach_cutoff))` before the Riemann solver, so that upwind dissipation scales with the flow speed rather than the sound speed. Default 0.1; 1 disables it. See [`numerics/overview.md`](numerics/overview.md) |
 
 ### `[numerics.face_reconstruction]`
 

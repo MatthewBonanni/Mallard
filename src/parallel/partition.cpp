@@ -18,7 +18,6 @@
 
 #include "comm.h"
 #include "distributed_mesh.h"
-#include "mesh.h"
 
 #ifdef Mallard_HAS_KAMINPAR
 #include <dkaminpar.h>
@@ -61,32 +60,6 @@ uint64_t hilbert_key(const std::array<double, N_DIM> & x, const std::array<doubl
     return key;
 }
 
-std::vector<int> partition_hilbert(const Mesh & mesh, int n_parts) {
-    const uint32_t n = mesh.n_cells;
-    std::array<double, N_DIM> lo, hi;
-    lo.fill(std::numeric_limits<double>::max());
-    hi.fill(std::numeric_limits<double>::lowest());
-    for (uint32_t c = 0; c < n; c++) {
-        for (int d = 0; d < N_DIM; d++) {
-            lo[d] = std::min(lo[d], double(mesh.h_cell_coords(c, d)));
-            hi[d] = std::max(hi[d], double(mesh.h_cell_coords(c, d)));
-        }
-    }
-    std::vector<uint64_t> key(n);
-    for (uint32_t c = 0; c < n; c++) {
-        std::array<double, N_DIM> x;
-        for (int d = 0; d < N_DIM; d++) x[d] = mesh.h_cell_coords(c, d);
-        key[c] = hilbert_key(x, lo, hi);
-    }
-    std::vector<uint32_t> order(n);
-    std::iota(order.begin(), order.end(), 0u);
-    std::stable_sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return key[a] < key[b]; });
-    std::vector<int> owner(n);
-    for (uint32_t k = 0; k < n; k++) {
-        owner[order[k]] = static_cast<int>((uint64_t(k) * n_parts) / n);
-    }
-    return owner;
-}
 
 bool have_graph_partitioner() {
 #ifdef Mallard_HAS_KAMINPAR
@@ -96,6 +69,7 @@ bool have_graph_partitioner() {
 #endif
 }
 
+<<<<<<< HEAD
 std::vector<int> partition_graph(const Mesh & mesh, int n_parts) {
 #ifdef Mallard_HAS_KAMINPAR
     using kaminpar::dist::GlobalEdgeID;
@@ -131,6 +105,8 @@ std::vector<int> partition_graph(const Mesh & mesh, int n_parts) {
     throw std::runtime_error("This build has no graph partitioner (configure with Mallard_ENABLE_KAMINPAR=ON).");
 #endif
 }
+=======
+>>>>>>> origin/main
 
 std::vector<int> partition_hilbert(const DistributedMesh & mesh, int n_parts) {
     const int p = comm::size();

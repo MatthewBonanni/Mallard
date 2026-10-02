@@ -27,6 +27,7 @@
 
 #include "comm.h"
 #include "common.h"
+#include "mesh_block.h"
 #include "partition.h"
 #include "expression.h"
 #include "gradient.h"
@@ -73,6 +74,7 @@ int Solver::init(const toml::value & input) {
     }
     // The cache describes the local mesh at this halo depth
     if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) teno->save_cache(halo_layers);
+    setup.reset();
     init_run_parameters();
     allocate_memory();
     init_sources();
@@ -84,33 +86,37 @@ int Solver::init(const toml::value & input) {
 
 void Solver::init_mesh() {
     std::cout << "Initializing mesh..." << std::endl;
-    mesh = std::make_shared<Mesh>();
-    mesh->init(input);
-    if (is_distributed()) {
-        if (halo_layers == 0) {
-            // A TENO cache records the halo its stencils need, which spares the
-            // setup pass that would otherwise find it out
-            const toml::value reconstruction =
-                toml::find_or(input, "numerics", "face_reconstruction", toml::value(toml::table{}));
-            const bool teno = toml::find_or<std::string>(reconstruction, "type", "FO") == "TENO";
-            const int cached =
-                comm::allreduce(teno ? int(TENO::cached_halo_layers(reconstruction)) : 0, comm::Op::MAX);
-            halo_layers = std::max(base_halo_layers(), cached);
-        }
+    if (!is_distributed()) {
+        mesh = std::make_shared<Mesh>();
+        mesh->init(input);
+        mesh->copy_host_to_device();
+        return;
+    }
+    if (halo_layers == 0) {
+        // A TENO cache records the halo its stencils need, which spares the
+        // setup pass that would otherwise find it out
+        const toml::value reconstruction =
+            toml::find_or(input, "numerics", "face_reconstruction", toml::value(toml::table{}));
+        const bool teno = toml::find_or<std::string>(reconstruction, "type", "FO") == "TENO";
+        const int cached = comm::allreduce(teno ? int(TENO::cached_halo_layers(reconstruction)) : 0, comm::Op::MAX);
+        halo_layers = std::max(base_halo_layers(), cached);
+    }
+    // Partition once; deeper halos (see halo_too_shallow) grow the existing layers
+    if (!setup) {
         const std::string partitioner = toml::find_or<std::string>(
             input, "parallel", "partitioner", have_graph_partitioner() ? "graph" : "hilbert");
         if (partitioner != "graph" && partitioner != "hilbert") {
             throw std::runtime_error("Unknown partitioner: " + partitioner + " (graph or hilbert).");
         }
-        const std::vector<int> owner = partitioner == "graph" ? partition_graph(*mesh, comm::size())
-                                                              : partition_hilbert(*mesh, comm::size());
-        const uint32_t n_global = mesh->n_cells;
-        mesh = build_local_mesh(*mesh, owner, halo_layers, distribution);
-        halo = HaloExchange(distribution);
-        const uint64_t max_owned = comm::allreduce(uint64_t(distribution.n_owned), comm::Op::MAX);
-        std::cout << "> Distributed over " << comm::size() << " ranks: " << n_global << " cells, at most "
-                  << max_owned << " per rank, " << halo_layers << " halo layers" << std::endl;
+        setup = std::make_unique<DistributedMesh>(read_mesh_block(input));
+        setup->distribute(partitioner == "graph" ? partition_graph(*setup, comm::size())
+                                                 : partition_hilbert(*setup, comm::size()));
     }
+    mesh = setup->build_local_mesh(halo_layers, distribution);
+    halo = HaloExchange(distribution);
+    const uint64_t max_owned = comm::allreduce(uint64_t(distribution.n_owned), comm::Op::MAX);
+    std::cout << "> Distributed over " << comm::size() << " ranks: " << setup->n_global_cells()
+              << " cells, at most " << max_owned << " per rank, " << halo_layers << " halo layers" << std::endl;
     mesh->copy_host_to_device();
 }
 
@@ -405,6 +411,10 @@ void Solver::init_numerics() {
 
     rhs_func = [this](StateView solution, StateView rhs, rtype t_stage) { calc_rhs(solution, rhs, t_stage); };
     check_nan = toml::find_or<bool>(input, "numerics", "check_nan", false);
+    low_mach_cutoff = find_real_or(input, "numerics", "low_mach_cutoff", 0.1);
+    if (!(low_mach_cutoff > 0.0)) {
+        throw std::runtime_error("numerics: low_mach_cutoff must be positive (1 disables the low-Mach correction).");
+    }
 }
 
 void Solver::init_run_parameters() {
