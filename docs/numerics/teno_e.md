@@ -45,6 +45,8 @@ for accuracy (expect design order on uniform triangles).
   (`examples/cylinder`, fine variant with 384 x 128 cells and stretched outer
   cells) the outermost ring develops a growing odd-even mode along the far
   field with every far-field condition tried (`upt`, `p_out`, `farfield`).
-  Order 3 and MUSCL are stable there. The likely culprit is the mirror
-  stencil across each face of the polygonal boundary. Use `order = 3` near
+  Order 3 and MUSCL are stable there. Dropping the mirror images across the
+  curved boundary makes it worse (noise from t = 1), so the high-degree fit
+  in the stretched boundary cells is the more likely cause; reducing the
+  order near boundaries is the next thing to try. Use `order = 3` near
   curved boundaries until this is resolved.
