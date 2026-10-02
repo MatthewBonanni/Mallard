@@ -144,6 +144,7 @@ class Solver {
         rtype t_wall_stop;
         bool use_cfl;
         rtype dt;
+        rtype dt_fixed = 0.0;
         rtype cfl;
         rtype t;
         uint64_t step;

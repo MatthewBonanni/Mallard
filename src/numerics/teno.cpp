@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -165,9 +166,10 @@ TENO::~TENO() {
 
 void TENO::init(const toml::value & input) {
     const int order = toml::find_or<int>(input, "order", 5);
-    if (order < 2 || order > teno::MAX_DEGREE + 1) {
-        throw std::runtime_error("TENO order must be between 2 and " +
-                                 std::to_string(teno::MAX_DEGREE + 1) + ".");
+    // The small stencils are degree 2, so the central polynomial must be at least degree 2
+    if (order < 3 || order > teno::MAX_DEGREE + 1) {
+        throw std::runtime_error("TENO order must be between 3 and " +
+                                 std::to_string(teno::MAX_DEGREE + 1) + " (use MUSCL for second order).");
     }
     degree = order - 1;
     n_dof_large = teno::n_dof(degree);
@@ -335,6 +337,22 @@ void TENO::compute_stencils_and_matrices() {
         monomial_means(Entry{i, -1, x0, y0}, r, mean0);
         for (uint8_t l = 0; l < nk; l++) h_basis_mean(i, l) = mean0[l];
 
+        auto point_in_cell = [&](uint32_t c, double px, double py) {
+            const uint32_t n = mesh->h_n_nodes_of_cell(c);
+            int sign = 0;
+            for (uint32_t k = 0; k < n; k++) {
+                const uint32_t a = mesh->h_node_of_cell(c, k), b = mesh->h_node_of_cell(c, (k + 1) % n);
+                const double cross = (mesh->h_node_coords(b, 0) - mesh->h_node_coords(a, 0)) * (py - mesh->h_node_coords(a, 1)) -
+                                     (mesh->h_node_coords(b, 1) - mesh->h_node_coords(a, 1)) * (px - mesh->h_node_coords(a, 0));
+                const double scale = 1e-12 * h * h;
+                const int s = (cross > scale) - (cross < -scale);
+                if (s == 0) return false;  // On an edge: treat as outside (mirror of a boundary cell)
+                if (sign == 0) sign = s;
+                if (s != sign) return false;
+            }
+            return true;
+        };
+
         // Candidates by vertex-neighbor layers plus their mirror images across
         // nearby boundary lines, sorted by distance
         auto gather = [&](size_t n_min, int max_layers) {
@@ -352,34 +370,64 @@ void TENO::compute_stencils_and_matrices() {
                 }
                 if (next.empty()) break;
                 layer = next;
-                // Unique boundary lines touched by the gathered cells
-                std::vector<int32_t> lines;
+                // Straight boundary lines touched by the gathered cells. One line can
+                // carry several conditions (e.g. inflow then wall), so each image takes
+                // its state from the line's face nearest to it.
+                struct Line {
+                    double nx, ny;
+                    std::vector<int32_t> faces;
+                };
+                std::vector<Line> lines;
                 for (uint32_t c : cells) {
                     for (uint32_t k = 0; k < mesh->h_n_faces_of_cell(c); k++) {
                         const uint32_t f = mesh->h_face_of_cell(c, k);
                         if (mesh->h_cells_of_face(f, 1) >= 0 || h_face_bc(f) < 0) continue;
                         const double nx = mesh->h_face_normals(f, 0) / mesh->h_face_area(f);
                         const double ny = mesh->h_face_normals(f, 1) / mesh->h_face_area(f);
-                        bool duplicate = false;
-                        for (int32_t g : lines) {
-                            const double gx = mesh->h_face_normals(g, 0) / mesh->h_face_area(g);
-                            const double gy = mesh->h_face_normals(g, 1) / mesh->h_face_area(g);
-                            const double off = (mesh->h_face_coords(f, 0) - mesh->h_face_coords(g, 0)) * gx +
-                                               (mesh->h_face_coords(f, 1) - mesh->h_face_coords(g, 1)) * gy;
-                            if (std::abs(nx * gx + ny * gy - 1.0) < 1e-10 && std::abs(off) < 1e-10 * h) {
-                                duplicate = true;
+                        Line * match = nullptr;
+                        for (Line & line : lines) {
+                            const int32_t g = line.faces[0];
+                            const double off = (mesh->h_face_coords(f, 0) - mesh->h_face_coords(g, 0)) * line.nx +
+                                               (mesh->h_face_coords(f, 1) - mesh->h_face_coords(g, 1)) * line.ny;
+                            if (std::abs(nx * line.nx + ny * line.ny - 1.0) < 1e-10 && std::abs(off) < 1e-10 * h) {
+                                match = &line;
                                 break;
                             }
                         }
-                        if (!duplicate) lines.push_back(f);
+                        if (match == nullptr) {
+                            lines.push_back(Line{nx, ny, {}});
+                            match = &lines.back();
+                        }
+                        if (std::find(match->faces.begin(), match->faces.end(), (int32_t)f) == match->faces.end()) {
+                            match->faces.push_back(f);
+                        }
                     }
                 }
                 entries.clear();
                 for (uint32_t c : cells) {
                     if (c != i) entries.push_back(Entry{c, -1, mesh->h_cell_coords(c, 0), mesh->h_cell_coords(c, 1)});
-                    for (int32_t f : lines) {
-                        Entry e{c, f, 0.0, 0.0};
-                        mirror(f, mesh->h_cell_coords(c, 0), mesh->h_cell_coords(c, 1), e.x, e.y);
+                    for (const Line & line : lines) {
+                        Entry e{c, line.faces[0], 0.0, 0.0};
+                        mirror(e.face, mesh->h_cell_coords(c, 0), mesh->h_cell_coords(c, 1), e.x, e.y);
+                        // Images that land inside the domain (non-convex boundaries) are not ghosts
+                        bool inside = false;
+                        for (uint32_t other : cells) {
+                            if (point_in_cell(other, e.x, e.y)) {
+                                inside = true;
+                                break;
+                            }
+                        }
+                        if (inside) continue;
+                        // The ghost state comes from the line's face nearest to the image
+                        double best = std::numeric_limits<double>::max();
+                        for (int32_t f : line.faces) {
+                            const double dx = mesh->h_face_coords(f, 0) - 0.5 * (e.x + mesh->h_cell_coords(c, 0));
+                            const double dy = mesh->h_face_coords(f, 1) - 0.5 * (e.y + mesh->h_cell_coords(c, 1));
+                            if (dx * dx + dy * dy < best) {
+                                best = dx * dx + dy * dy;
+                                e.face = f;
+                            }
+                        }
                         entries.push_back(e);
                     }
                 }
@@ -757,12 +805,22 @@ struct TENOFunctor {
                     for (uint8_t l = 0; l < teno::NK_SMALL; l++) project(aS[s][l], cS[s][l]);
                 }
                 for (uint8_t var = 0; var < N_CONSERVATIVE; var++) {
-                    const rtype gK = 1.0 / Kokkos::pow(smoothness(cK, nk, var, i_cell) + eps, 6.0);
+                    // gamma_k = 1 / (SI_k + eps)^6, normalized by the largest one so
+                    // that the weights cannot overflow (even in single precision)
+                    const rtype si_K = smoothness(cK, nk, var, i_cell) + eps;
+                    rtype si_small[teno::MAX_FACES] = {};
+                    rtype si_min = si_K;
+                    for (uint8_t s = 0; s < n_faces; s++) {
+                        if (!valid[s]) continue;
+                        si_small[s] = smoothness(cS[s], teno::NK_SMALL, var, i_cell) + eps;
+                        si_min = Kokkos::fmin(si_min, si_small[s]);
+                    }
+                    const rtype gK = Kokkos::pow(si_min / si_K, 6.0);
                     rtype g_small[teno::MAX_FACES] = {};
                     rtype sum_small = 0.0;
                     for (uint8_t s = 0; s < n_faces; s++) {
                         if (!valid[s]) continue;
-                        g_small[s] = 1.0 / Kokkos::pow(smoothness(cS[s], teno::NK_SMALL, var, i_cell) + eps, 6.0);
+                        g_small[s] = Kokkos::pow(si_min / si_small[s], 6.0);
                         sum_small += g_small[s];
                     }
                     use_large[var] = (sum_small == 0.0) || (gK / (gK + sum_small) >= cutoff);
