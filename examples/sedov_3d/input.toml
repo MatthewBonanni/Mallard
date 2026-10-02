@@ -76,7 +76,6 @@ check_nan = true
 type = "TENO"
 order = 5
 bound_preserving = true
-cache_file = "teno_cache.bin"
 
 [physics]
 type = "euler"
@@ -115,3 +114,8 @@ format = "vtu"
 geometry = "back"
 time_interval = 0.005
 variables = ["RHO"]
+
+[[write_data]]
+prefix = "./restart/sedov"
+format = "restart"
+interval = 1000
