@@ -20,16 +20,19 @@
 /**
  * @brief Low-Mach correction of Thornber et al. (J. Comput. Phys. 227, 2008):
  *        scales the jump of the reconstructed velocity across a face by
- *        z = min(1, max(M_L, M_R)), keeping its mean. Upwind fluxes otherwise
- *        damp velocity jumps at the sound speed, a dissipation that does not
- *        vanish as M -> 0; with the correction it scales with the flow speed.
- *        Leaves supersonic faces (z = 1) untouched.
+ *        z = min(1, max(M_L, M_R, M_cut)), keeping its mean. Upwind fluxes
+ *        otherwise damp velocity jumps at the sound speed, a dissipation that
+ *        does not vanish as M -> 0; with the correction it scales with the flow
+ *        speed. The cutoff M_cut keeps some acoustic damping in gas nearly at
+ *        rest, like the cutoff Mach number of preconditioned all-speed schemes
+ *        (Weiss & Smith, AIAA J. 33(11), 1995). Supersonic faces (z = 1) are
+ *        untouched.
  */
 KOKKOS_INLINE_FUNCTION
-void low_mach_correction(rtype * W_l, rtype * W_r, const rtype gamma) {
+void low_mach_correction(rtype * W_l, rtype * W_r, const rtype gamma, const rtype M_cut) {
     const rtype M_l2 = dot<N_DIM>(W_l + 1, W_l + 1) * W_l[0] / (gamma * W_l[N_DIM + 1]);
     const rtype M_r2 = dot<N_DIM>(W_r + 1, W_r + 1) * W_r[0] / (gamma * W_r[N_DIM + 1]);
-    const rtype z = Kokkos::fmin(1.0, Kokkos::fmax(0.1, Kokkos::sqrt(Kokkos::fmax(M_l2, M_r2))));
+    const rtype z = Kokkos::fmin(1.0, Kokkos::fmax(M_cut, Kokkos::sqrt(Kokkos::fmax(M_l2, M_r2))));
     FOR_I_DIM {
         const rtype mean = 0.5 * (W_l[1 + i] + W_r[1 + i]);
         const rtype half_jump = 0.5 * (W_l[1 + i] - W_r[1 + i]);
@@ -59,7 +62,7 @@ struct ConvectiveFluxFunctor {
     Kokkos::View<rtype *[N_CONSERVATIVE]> W_cells;
     Kokkos::View<rtype *[N_CONSERVATIVE]> face_flux;
     rtype gamma;
-    bool low_mach;
+    rtype low_mach_cutoff;  // 1 disables the low-Mach correction
 
     KOKKOS_INLINE_FUNCTION
     void operator()(const uint32_t i_face) const {
@@ -88,7 +91,7 @@ struct ConvectiveFluxFunctor {
             FOR_I_CONSERVATIVE W_l[i] = face_solution(i_face, i_quad, 0, i);
             if (c1 >= 0) {
                 FOR_I_CONSERVATIVE W_r[i] = face_solution(i_face, i_quad, 1, i);
-                if (low_mach) low_mach_correction(W_l, W_r, gamma);
+                if (low_mach_cutoff < 1.0) low_mach_correction(W_l, W_r, gamma, low_mach_cutoff);
             } else {
                 boundaries.exterior_W(i_face, i_quad, n_quad, W_l, n_unit, W_cells, face_solution, W_r);
             }
