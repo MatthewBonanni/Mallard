@@ -1262,6 +1262,7 @@ struct TENOFunctor {
 
     Kokkos::View<rtype *[N_CONSERVATIVE]> W;
     Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution;
+    Kokkos::View<uint32_t *> cells;  // cells to reconstruct; empty for [0, n)
 
     /**
      * @brief State of a stencil entry: cell c, or its mirror across boundary face f.
@@ -1358,7 +1359,8 @@ struct TENOFunctor {
     }
 
     KOKKOS_INLINE_FUNCTION
-    void operator()(SmoothPass, const uint32_t i_cell) const {
+    void operator()(SmoothPass, const uint32_t idx) const {
+        const uint32_t i_cell = cells.extent(0) ? cells(idx) : idx;
         rtype U0[N_CONSERVATIVE], W0[N_CONSERVATIVE];
         conservatives(i_cell, U0);
         FOR_I_CONSERVATIVE W0[i] = W(i_cell, i);
@@ -1695,8 +1697,10 @@ struct TENOFunctor {
 };
 
 template <uint8_t DEG>
-void TENO::launch_reconstruction(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
-                                 Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution) {
+void TENO::launch_reconstruction(const Kokkos::DefaultExecutionSpace & exec,
+                                 Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
+                                 Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution,
+                                 Kokkos::View<uint32_t *> cells, bool troubled_pass) {
     using Functor = TENOFunctor<DEG>;
     Functor functor{sigma_threshold, sigma_upper, C_T, characteristic, bound_preserving, boundaries.gamma,
                     mesh->offsets_faces_of_cell, mesh->faces_of_cell, mesh->cells_of_face,
@@ -1706,29 +1710,77 @@ void TENO::launch_reconstruction(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                     scale, basis_mean, stencil_large_size, stencil_large, stencil_large_face, pinv_large,
                     stencil_small_size, stencil_small, stencil_small_face, pinv_small,
                     si_matrix, troubled, troubled_coeffs, troubled_cells, n_troubled,
-                    solution, face_solution};
+                    solution, face_solution, cells};
     using Dynamic = Kokkos::Schedule<Kokkos::Dynamic>;
+    using Space = Kokkos::DefaultExecutionSpace;
+    if (!troubled_pass) {
+        const uint32_t n = cells.extent(0) ? cells.extent(0) : mesh->n_reconstructed();
+        Kokkos::parallel_for("teno_smooth", Kokkos::RangePolicy<Space, typename Functor::SmoothPass, Dynamic>(exec, 0, n),
+                             functor);
+        return;
+    }
     // The troubled passes cover all cells and exit past the queue length, so the
     // count never has to be read back to the host
-    Kokkos::deep_copy(n_troubled, 0u);
-    Kokkos::parallel_for("teno_smooth",
-                         Kokkos::RangePolicy<typename Functor::SmoothPass, Dynamic>(0, mesh->n_reconstructed()), functor);
+    const uint32_t n = mesh->n_reconstructed();
     Kokkos::parallel_for("teno_troubled_faces",
-                         Kokkos::RangePolicy<typename Functor::TroubledFacePass, Dynamic>(
-                             0, mesh->n_reconstructed() * teno::MAX_FACES),
+                         Kokkos::RangePolicy<Space, typename Functor::TroubledFacePass, Dynamic>(exec, 0, n * teno::MAX_FACES),
                          functor);
     Kokkos::parallel_for("teno_troubled_finish",
-                         Kokkos::RangePolicy<typename Functor::TroubledFinishPass, Dynamic>(0, mesh->n_reconstructed()),
-                         functor);
+                         Kokkos::RangePolicy<Space, typename Functor::TroubledFinishPass, Dynamic>(exec, 0, n), functor);
+    Kokkos::deep_copy(exec, n_troubled, 0u);
 }
 
 void TENO::calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                             Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution) {
+    calc_cell_face_values(Kokkos::DefaultExecutionSpace(), solution, face_solution, Kokkos::View<uint32_t *>());
+    finish_cell_face_values(solution, face_solution);
+}
+
+std::vector<uint32_t> TENO::cells_independent_of_halo(uint32_t n_owned) const {
+    // Stencil entries (mirrored ones too) and the face neighbors used for the
+    // characteristic projection and the bounds
+    auto h_large_size = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), stencil_large_size);
+    auto h_large = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), stencil_large);
+    auto h_small_size = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), stencil_small_size);
+    auto h_small = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), stencil_small);
+    std::vector<uint32_t> cells;
+    for (uint32_t c = 0; c < n_owned; c++) {
+        bool independent = true;
+        for (uint16_t s = 0; s < h_large_size(c); s++) independent = independent && h_large(c, s) < (int32_t)n_owned;
+        for (uint32_t k = 0; k < mesh->h_n_faces_of_cell(c); k++) {
+            for (uint16_t s = 0; s < h_small_size(c, k); s++) {
+                independent = independent && h_small(c, k, s) < (int32_t)n_owned;
+            }
+            const uint32_t f = mesh->h_face_of_cell(c, k);
+            for (uint8_t side = 0; side < 2; side++) {
+                independent = independent && mesh->h_cells_of_face(f, side) < (int32_t)n_owned;
+            }
+        }
+        if (independent) cells.push_back(c);
+    }
+    return cells;
+}
+
+void TENO::calc_cell_face_values(const Kokkos::DefaultExecutionSpace & exec,
+                                 Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
+                                 Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution,
+                                 Kokkos::View<uint32_t *> cells) {
+    dispatch(exec, solution, face_solution, cells, false);
+}
+
+void TENO::finish_cell_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
+                                   Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution) {
+    dispatch(Kokkos::DefaultExecutionSpace(), solution, face_solution, Kokkos::View<uint32_t *>(), true);
+}
+
+void TENO::dispatch(const Kokkos::DefaultExecutionSpace & exec, Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
+                    Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution, Kokkos::View<uint32_t *> cells,
+                    bool troubled_pass) {
     switch (degree) {
-        case 2: launch_reconstruction<2>(solution, face_solution); break;
-        case 3: launch_reconstruction<3>(solution, face_solution); break;
-        case 4: launch_reconstruction<4>(solution, face_solution); break;
-        case 5: launch_reconstruction<5>(solution, face_solution); break;
+        case 2: launch_reconstruction<2>(exec, solution, face_solution, cells, troubled_pass); break;
+        case 3: launch_reconstruction<3>(exec, solution, face_solution, cells, troubled_pass); break;
+        case 4: launch_reconstruction<4>(exec, solution, face_solution, cells, troubled_pass); break;
+        case 5: launch_reconstruction<5>(exec, solution, face_solution, cells, troubled_pass); break;
         default: throw std::runtime_error("TENO: unsupported degree.");
     }
 }
