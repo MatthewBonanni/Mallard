@@ -259,9 +259,12 @@ The design:
    `sum_k Y_k = 1` at every face point to round-off.
 3. **Bounds**: one scaling `theta` per cell
    ([Zhang & Shu 2010](https://doi.org/10.1016/j.jcp.2010.08.016)), the largest value
-   in `[0, 1]` that keeps every `Y_k` at every face point within the range of
-   the cell and its face neighbors (and so in `[0, 1]`), and `gamma > 1`.
-   Applied to all scalars at once, it preserves `sum Y = 1`.
+   in `[0, 1]` that keeps every `Y_k` at every face point in `[0, 1]` and
+   `gamma > 1` in smooth cells, and within the range of the cell and its face
+   neighbors in troubled cells. Smooth cells get only the physical bounds,
+   because a local-range bound clips smooth extrema (e.g. radical peaks in a
+   flame) and costs the design order; Zhang–Shu scaling to physical bounds does
+   not. Applied to all scalars at once, it preserves `sum Y = 1`.
 4. **Troubled-cell indicator**: today's density-jump variance misses species
    interfaces at constant density (common in non-premixed flames). It becomes
    the maximum of the variances of `rho` and of the mixture molar mass `W`.
@@ -886,20 +889,17 @@ Species counts are taken from the files when they are added.
 | Float builds produce wrong chemistry | Chemistry in double always; float validated on non-reacting cases and on 0D tests only |
 | Porting Cantera's transport fitting is subtle | Property tests to 1e-6 against Cantera; `unity_lewis` works without it |
 
-## Open questions
+## Decisions on the open questions
 
-1. **First target: detonations or flames?** Reactive Euler (milestone 8)
-   needs no transport; flames need milestone 9 first. The order above puts
-   detonations first.
-2. **Own chemistry core vs waiting for a Kokkos 5 TChem**: is owning ~3-5k
-   lines of kinetics and integrator acceptable?
-3. **Dependencies**: yaml-cpp (FetchContent) in the build, and Cantera
-   (Python) for generating committed reference data in `tools/`: acceptable?
-4. **Conservation vs interface oscillations**: is a non-conservative
-   double-flux option acceptable for injection-type problems, or should the
-   solver stay strictly conservative?
-5. **Roe/RHLL for mixtures**: needed early (e.g. for carbuncle-prone blunt-body
-   detonation cases), or is HLLC enough to start?
-6. **Float builds**: OK that chemistry always runs in double?
-7. **Scope of "done"**: are the 2D cellular detonation and the counterflow
-   flame required, or stretch goals?
+Accepted by the user (2026-10-02):
+
+1. **Detonations first** (milestone 8 before transport in milestone 9).
+2. **Own chemistry core** (~3-5k lines) rather than waiting for a Kokkos 5 TChem.
+3. **Dependencies**: yaml-cpp via FetchContent; Cantera (Python) only for
+   generating committed reference data in `tools/`.
+4. **Double flux** as a non-conservative input option; conservative by default.
+5. **HLLC first**; Roe/RHLL for mixtures stay in milestone 12.
+6. **Chemistry always in double**, also in float builds.
+7. **Scope of "done"**: as in milestone 12, the 2D cellular detonation and
+   counterflow flame are extensions, not requirements for the first
+   reacting release.
