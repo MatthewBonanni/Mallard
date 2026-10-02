@@ -1,0 +1,123 @@
+# Mach 3 flow over a sphere (Euler): a detached bow shock stands off the
+# sphere, whose standoff distance is compared with Billig's correlation
+# (Billig, J. Spacecraft Rockets 4(6), 1967): Delta / R = 0.143 exp(3.24 / M^2)
+# = 0.205 at M = 3, i.e. the shock nose at x = -0.6025 for a sphere of
+# diameter 1 at the origin. Needs the 3D build (cmake -DMallard_DIM=3).
+#
+# Mesh: unstructured tetrahedra on the quarter domain y >= 0, z >= 0 (the flow
+# is axisymmetric; y = 0 and z = 0 are symmetry planes), refined on the sphere
+# and through the shock layer. Generate it first:
+#   python ../../tools/make_sphere_mesh.py sphere.msh
+# (about ... tetrahedra). Free stream rho = 1.4, p = 1, so the sound speed is 1
+# and u = 3; RHLL fluxes (carbuncle-free) with bound-preserving TENO5.
+#
+# Run:
+#   ../../build3d/src/Mallard -i input.toml
+#   python ../../tools/plot_sphere.py solut
+#
+# Expected result: the bow shock settles by t ~ 4 (D / u units) and its nose
+# sits at x = ... (Delta / R = ..., ...% from Billig). Takes ... on one A100.
+
+[run]
+t_stop = 4.0
+cfl = 0.6
+
+[mesh]
+type = "file"
+filename = "sphere.msh"
+
+[initialize]
+type = "constant"
+u = [3.0, 0.0, 0.0]
+p = 1.0
+T = 0.7142857142857143
+
+[[boundaries]]
+name = "inflow"
+type = "upt"
+u = [3.0, 0.0, 0.0]
+p = 1.0
+T = 0.7142857142857143
+
+[[boundaries]]
+name = "lateral"
+type = "farfield"
+u = [3.0, 0.0, 0.0]
+p = 1.0
+T = 0.7142857142857143
+
+[[boundaries]]
+name = "outflow"
+type = "extrapolation"
+
+[[boundaries]]
+name = "sphere"
+type = "wall_adiabatic"
+
+[[boundaries]]
+name = "symmetry_y"
+type = "symmetry"
+
+[[boundaries]]
+name = "symmetry_z"
+type = "symmetry"
+
+[numerics]
+riemann_solver = "RHLL"
+time_integrator = "SSPRK3"
+check_nan = true
+
+[numerics.face_reconstruction]
+type = "TENO"
+order = 5
+bound_preserving = true
+cache_file = "teno_cache.bin"
+
+[physics]
+type = "euler"
+gamma = 1.4
+p_ref = 1.0
+T_ref = 1.0
+rho_ref = 1.0
+
+[output]
+check_interval = 200
+
+[[forces]]
+zone = "sphere"
+interval = 10
+file = "forces_sphere.csv"
+
+[[write_data]]
+prefix = "./solut/sphere"
+format = "vtu"
+time_interval = 1.0
+variables = ["RHO", "U", "P"]
+
+# The symmetry planes are meridian slices of the axisymmetric flow, and the
+# sphere surface carries the wall pressure; written often for animation
+[[write_data]]
+prefix = "./slices/y0"
+format = "vtu"
+geometry = "symmetry_y"
+time_interval = 0.02
+variables = ["RHO", "U", "P"]
+
+[[write_data]]
+prefix = "./slices/z0"
+format = "vtu"
+geometry = "symmetry_z"
+time_interval = 0.02
+variables = ["RHO", "U", "P"]
+
+[[write_data]]
+prefix = "./slices/wall"
+format = "vtu"
+geometry = "sphere"
+time_interval = 0.02
+variables = ["P"]
+
+[[write_data]]
+prefix = "./restart/sphere"
+format = "restart"
+interval = 2000
