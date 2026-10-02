@@ -20,7 +20,6 @@
 #include <string>
 #include <tuple>
 
-#include "mesh_block.h"
 #include "periodic_fixtures.h"
 #include "solver.h"
 #include "test_fixtures.h"
@@ -124,8 +123,6 @@ TEST(PeriodicSetup2D, InvalidSetupsAreRejected) {
     c.boundaries = "[[boundaries]]\nname = \"left\"\ntype = \"symmetry\"\n";
     Solver solver;
     EXPECT_THROW(solver.init(parse_toml(make_input(c))), std::runtime_error);
-    // Distributed setup and conversion do not handle periodicity yet
-    EXPECT_THROW(read_mesh_block(parse_toml(make_input(c))), std::runtime_error);
 }
 
 namespace {
@@ -323,7 +320,8 @@ TEST(PeriodicSetup2D, TransmissiveImagesAreFoundAcrossTheSeam) {
         faces.push_back({{id(i, n), id(i + 1, n)}, "top"});
     }
     Mesh mesh;
-    mesh.init_from_connectivity(nodes, cells, faces, "unassigned", {{"left", "right", {1.0, 0.0}}});
+    mesh.init_from_connectivity(nodes, cells, faces, "unassigned",
+                                std::vector<Mesh::PeriodicPair>{{"left", "right", {1.0, 0.0}}});
     const BoundaryData bd = make_uniform_boundaries(mesh, BoundaryType::EXTRAPOLATION);
     auto h_image_face = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), bd.face_image_face);
     uint32_t n_boundary = 0;

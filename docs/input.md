@@ -36,8 +36,7 @@ Generated meshes have boundary zones named `left`, `right`, `bottom` and `top`.
 `wedge`) periodic in those directions: `left`/`right`, `bottom`/`top` and
 `back`/`front` are joined into interior faces and disappear as boundary zones.
 Every scheme sees the seam as interior. Each periodic direction needs at least
-3 cells. Periodic meshes run on one rank for now, and mesh files cannot be
-periodic yet.
+3 cells. Mesh files cannot be periodic yet.
 
 In the 3D build (`-DMallard_DIM=3`), generated meshes are boxes
 `[0, Lx] x [0, Ly] x [0, Lz]` of `Nx x Ny x Nz` blocks (`Nz`, `Lz` default to

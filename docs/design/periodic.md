@@ -1,6 +1,6 @@
 # Design: periodic boundaries
 
-Status: in progress. Motivated by the canonical Taylor-Green vortex (the full
+Status: generated meshes, serial and distributed (Gmsh periodic zones to follow). Motivated by the canonical Taylor-Green vortex (the full
 box `[-pi L, pi L]^3`) and decaying isotropic turbulence, which need fully
 periodic boxes, and by 2D cases (isentropic vortex, Kelvin-Helmholtz).
 
@@ -90,9 +90,25 @@ cell-to-face distance for the hydrostatic ghost pressure.
 
 ## Distributed runs
 
-Faces are hashed by node keys in `DistributedMesh`, halo cells carry their
-shifts, and partitioners see periodic edges. Until this lands, distributed runs
-on periodic meshes stop with a clear error.
+- `DistributedMesh` finds the node classes first: every rank gathers the faces
+  and node coordinates of the periodic zones and runs the serial matching on
+  that surface, so all ranks agree on every key and offset.
+- Faces are hashed by their node keys, so seam faces pair into interior faces
+  (and dual-graph edges, which the graph partitioner sees); boundary faces of
+  periodic zones are not posted.
+- The node directory that grows halo layers is keyed by node keys, so halos
+  extend across seams.
+- Each local mesh gets its nodes' offsets and keys (the first local node of
+  each class), and computes its own shifts: stencils, and so results, match the
+  serial ones.
+
+Known limit: gathering the periodic zones puts O(N^(2/3)) data (the paired
+surfaces) on every rank. That is fine up to about 1e8-1e9 cells but breaks the
+"no rank holds global data" rule of `mpi.md`. The scalable alternative follows
+the face matching: send each zone node, snapped to the matching tolerance and
+translated into zone A's frame, to a rank chosen by hashing its snapped
+coordinates; pair the matches there, and resolve the classes (at most 8 nodes,
+at a box corner) with a few rounds of key propagation to the nodes' owners.
 
 ## Testing
 

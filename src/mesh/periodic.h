@@ -14,6 +14,7 @@
 
 #include <array>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "mesh.h"
@@ -24,6 +25,7 @@
  *        its lattice offset L, with x_n = x_key + sum_j L_j translations[j].
  */
 struct PeriodicNodes {
+    std::vector<std::string> zones;  // the zones joined by the pairs
     std::vector<std::array<rtype, N_DIM>> translations;
     std::vector<uint32_t> key;
     std::vector<std::array<int8_t, 3>> lattice;

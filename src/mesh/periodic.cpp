@@ -84,6 +84,7 @@ PeriodicNodes match_periodic_nodes(const std::vector<std::array<rtype, N_DIM>> &
     std::set<std::string> used_zones;
     for (const auto & pair : pairs) {
         for (const std::string & zone : {pair.zone_a, pair.zone_b}) {
+            result.zones.push_back(zone);
             if (!faces_of_zone.count(zone)) {
                 throw std::runtime_error("Periodic zone " + zone + " is not a boundary zone of the mesh.");
             }

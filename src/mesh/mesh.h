@@ -101,6 +101,7 @@ void cell_tetrahedra(const std::vector<std::array<double, 3>> & nodes,
 
 
 struct MeshBlock;
+struct PeriodicNodes;
 
 class Mesh {
     public:
@@ -330,6 +331,16 @@ class Mesh {
                                     const std::vector<BoundaryFace> & boundary_faces,
                                     const std::string & unlisted_zone = "unassigned",
                                     const std::vector<PeriodicPair> & periodic = {});
+
+        /**
+         * @brief Build the mesh with periodic node classes found beforehand
+         *        (e.g. across ranks); boundary faces of classes.zones, if given,
+         *        are dropped.
+         */
+        void init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & nodes,
+                                    const std::vector<std::vector<uint32_t>> & cells,
+                                    const std::vector<BoundaryFace> & boundary_faces,
+                                    const std::string & unlisted_zone, const PeriodicNodes & classes);
 
         /**
          * @brief Build the mesh from a block holding the whole mesh.

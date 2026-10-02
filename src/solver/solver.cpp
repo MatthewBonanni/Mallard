@@ -97,7 +97,7 @@ void Solver::init_mesh() {
         if (partitioner != "graph" && partitioner != "hilbert") {
             throw std::runtime_error("Unknown partitioner: " + partitioner + " (graph or hilbert).");
         }
-        setup = std::make_unique<DistributedMesh>(read_mesh_block(input));
+        setup = std::make_unique<DistributedMesh>(read_mesh_block(input), Mesh::periodic_pairs(input));
         setup->distribute(partitioner == "graph" ? partition_graph(*setup, comm::size())
                                                  : partition_hilbert(*setup, comm::size()));
     }

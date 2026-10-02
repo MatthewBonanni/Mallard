@@ -237,9 +237,6 @@ bool is_hdf5_mesh(const std::string & filename) {
 }
 
 MeshBlock read_mesh_block(const toml::value & input) {
-    if (!Mesh::periodic_pairs(input).empty()) {
-        throw std::runtime_error("Periodic meshes do not support distributed runs or HDF5 conversion yet.");
-    }
     const std::string type_str = toml::find_or<std::string>(input, "mesh", "type", "file");
     const auto it = MESH_TYPES.find(type_str);
     if (it == MESH_TYPES.end()) throw std::runtime_error("Unknown mesh type: " + type_str + ".");

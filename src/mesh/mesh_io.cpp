@@ -44,26 +44,24 @@ void Mesh::init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & 
                                   const std::vector<BoundaryFace> & boundary_faces,
                                   const std::string & unlisted_zone,
                                   const std::vector<PeriodicPair> & periodic) {
+    init_from_connectivity(nodes, cells, boundary_faces, unlisted_zone,
+                           periodic.empty() ? PeriodicNodes() : match_periodic_nodes(nodes, boundary_faces, periodic));
+}
+
+void Mesh::init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & nodes,
+                                  const std::vector<std::vector<uint32_t>> & cells,
+                                  const std::vector<BoundaryFace> & boundary_faces,
+                                  const std::string & unlisted_zone, const PeriodicNodes & classes) {
     n_nodes = nodes.size();
     n_cells = cells.size();
 
     // Periodic classes of the nodes; faces are keyed by the classes' keys so a
     // face of zone_a and its image in zone_b become one face
-    periodic_translations.clear();
-    periodic_zones.clear();
-    h_node_key.clear();
-    h_node_lattice.clear();
+    periodic_translations = classes.translations;
+    periodic_zones = classes.zones;
+    h_node_key = classes.key;
+    h_node_lattice = classes.lattice;
     shift_lattice.assign(1, {0, 0, 0});
-    if (!periodic.empty()) {
-        PeriodicNodes classes = match_periodic_nodes(nodes, boundary_faces, periodic);
-        periodic_translations = std::move(classes.translations);
-        h_node_key = std::move(classes.key);
-        h_node_lattice = std::move(classes.lattice);
-        for (const auto & pair : periodic) {
-            periodic_zones.push_back(pair.zone_a);
-            periodic_zones.push_back(pair.zone_b);
-        }
-    }
     auto node_key = [&](uint32_t n) { return h_node_key.empty() ? n : h_node_key[n]; };
     auto keyed = [&](std::vector<uint32_t> & face) {
         for (uint32_t & n : face) n = node_key(n);
