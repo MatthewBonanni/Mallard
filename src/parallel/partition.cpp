@@ -89,10 +89,14 @@ std::vector<int> partition_hilbert(const DistributedMesh & mesh, int n_parts) {
     for (size_t c = 0; c < centers.size(); c++) items[c] = {hilbert_key(centers[c], lo, hi), mesh.first_cell() + c};
     std::sort(items.begin(), items.end());
 
-    // Sample sort: p evenly spaced samples per rank pick p - 1 splitters
+    // Sample sort: evenly spaced samples from every rank pick p - 1 splitters.
+    // Parts come from global positions, so splitters only balance the sort
+    // itself; a bounded oversampling keeps the gathered samples O(p).
+    constexpr int MAX_SAMPLES = 64;
+    const int n_samples = std::min(p, MAX_SAMPLES);
     std::vector<uint64_t> samples;
-    for (int k = 0; k < p && !items.empty(); k++) {
-        const Item & s = items[(items.size() * k) / p];
+    for (int k = 0; k < n_samples && !items.empty(); k++) {
+        const Item & s = items[(items.size() * k) / n_samples];
         samples.push_back(s.first);
         samples.push_back(s.second);
     }
