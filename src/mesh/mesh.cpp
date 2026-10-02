@@ -377,8 +377,12 @@ void Mesh::init_box(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, bool triangles
     std::vector<std::array<rtype, N_DIM>> nodes;
     for (uint32_t i = 0; i < nx + 1; ++i) {
         for (uint32_t j = 0; j < ny + 1; ++j) {
-            const std::array<rtype, 2> x = {i * dx, j * dy};
-            nodes.push_back(wedge ? wedge_node(x[0], x[1], Ly) : x);
+            std::array<rtype, 2> x = {i * dx, j * dy};
+            if (wedge) x = wedge_node(x[0], x[1], Ly);
+            std::array<rtype, N_DIM> p{};
+            p[0] = x[0];
+            p[1] = x[1];
+            nodes.push_back(p);
         }
     }
     auto node = [&](uint32_t i, uint32_t j) { return i * (ny + 1) + j; };
