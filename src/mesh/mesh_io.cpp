@@ -61,7 +61,7 @@ void Mesh::init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & 
                 face_of_edge.emplace(key, face_nodes.size());
                 cell_faces[c].push_back(face_nodes.size());
                 face_nodes.push_back({a, b});
-                face_cells.push_back({(int32_t)c, -1});
+                face_cells.push_back({static_cast<int32_t>(c), -1});
             } else {
                 if (face_cells[it->second][1] != -1) {
                     throw std::runtime_error("Mesh: an edge is shared by more than two cells.");
@@ -154,10 +154,10 @@ void Mesh::allocate_and_fill(const std::vector<std::array<rtype, N_DIM>> & nodes
     build_csr(cell_faces, faces_of_cell, offsets_faces_of_cell, h_faces_of_cell, h_offsets_faces_of_cell, "faces_of_cell");
     build_csr(face_node_lists, nodes_of_face, offsets_nodes_of_face, h_nodes_of_face, h_offsets_nodes_of_face, "nodes_of_face");
 
-    auto add_zone = [&](const std::string & name, FaceZoneType type, const std::vector<uint32_t> & faces) {
+    auto add_zone = [&](const std::string & name, FaceZoneType zone_type, const std::vector<uint32_t> & faces) {
         FaceZone zone;
         zone.set_name(name);
-        zone.set_type(type);
+        zone.set_type(zone_type);
         zone.faces = Kokkos::View<uint32_t *>("zone_" + name, faces.size());
         zone.h_faces = Kokkos::create_mirror_view(zone.faces);
         for (size_t i = 0; i < faces.size(); i++) zone.h_faces(i) = faces[i];

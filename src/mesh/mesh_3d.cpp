@@ -200,7 +200,7 @@ void Mesh::init_from_connectivity_3d(const std::vector<std::array<rtype, N_DIM>>
                 face_of_key.emplace(key, face_nodes.size());
                 cell_faces[c].push_back(face_nodes.size());
                 face_nodes.push_back(fn);
-                face_cells.push_back({(int32_t)c, -1});
+                face_cells.push_back({static_cast<int32_t>(c), -1});
             } else {
                 if (face_cells[it->second][1] != -1) {
                     throw std::runtime_error("Mesh: a face is shared by more than two cells.");
@@ -243,6 +243,6 @@ void Mesh::init_from_connectivity_3d(const std::vector<std::array<rtype, N_DIM>>
 }
 
 void Mesh::init_cart_3d(uint32_t nx, uint32_t ny, uint32_t nz, rtype Lx, rtype Ly, rtype Lz, MeshType kind) {
-    const auto [n_cells, n_nodes] = cartesian_3d_size(nx, ny, nz, kind);
-    init_from_block(cartesian_3d_block(nx, ny, nz, Lx, Ly, Lz, kind, 0, n_cells, 0, n_nodes));
+    const auto [cells, nodes] = cartesian_3d_size(nx, ny, nz, kind);
+    init_from_block(cartesian_3d_block(nx, ny, nz, Lx, Ly, Lz, kind, 0, cells, 0, nodes));
 }

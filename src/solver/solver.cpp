@@ -43,7 +43,7 @@ int Solver::init(const std::string & input_file_name) {
     return init(toml::parse(input_file_name));
 }
 
-int Solver::init(const toml::value & input) {
+int Solver::init(const toml::value & input_in) {
     print_logo();
     std::cout << LOG_SEPARATOR << std::endl;
     std::cout << "Initializing solver..." << std::endl;
@@ -52,7 +52,7 @@ int Solver::init(const toml::value & input) {
 #else
     std::cout << "Mallard has been compiled with SINGLE precision." << std::endl;
 #endif
-    this->input = input;
+    this->input = input_in;
     std::cout << LOG_SEPARATOR << std::endl;
 
     t = 0.0;
