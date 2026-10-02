@@ -108,6 +108,7 @@ class Solver {
         void init_solution();
         void init_solution_constant();
         void init_solution_analytical();
+        void init_solution_restart();
         void allocate_memory();
         void register_data();
         bool done() const;
