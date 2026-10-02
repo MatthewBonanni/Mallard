@@ -46,7 +46,7 @@ FaceKey face_key(const std::vector<uint64_t> & nodes) {
     if (nodes.size() > key.size()) throw std::logic_error("DistributedMesh: face with more than 4 nodes.");
     key.fill(NONE);
     std::copy(nodes.begin(), nodes.end(), key.begin());
-    std::sort(key.begin(), key.begin() + nodes.size());
+    std::sort(key.begin(), key.end());  // the NONE padding sorts last
     return key;
 }
 

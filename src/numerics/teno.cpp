@@ -1740,7 +1740,7 @@ void TENO::launch_reconstruction(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                     scale, basis_mean, stencil_large_size, stencil_large, stencil_large_face, pinv_large,
                     stencil_small_size, stencil_small, stencil_small_face, pinv_small,
                     si_matrix, troubled, troubled_coeffs, troubled_cells, n_troubled,
-                    solution, face_solution};
+                    solution, face_solution, {}};
     using Dynamic = Kokkos::Schedule<Kokkos::Dynamic>;
     // The troubled passes cover all cells and exit past the queue length, so the
     // count never has to be read back to the host
