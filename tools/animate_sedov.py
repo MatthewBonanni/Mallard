@@ -32,7 +32,7 @@ from sedov import shock_radius, similarity_profiles, xi0
 BG = "#0d1117"
 FG = "#e6edf3"
 GRID = "#30363d"
-DISK_RADIUS = 1.08
+DISK_RADIUS = 1.08  # The planes are cut at 1.2 R(t), so the cutaway grows with the blast
 
 
 def series(planes, name):
@@ -45,18 +45,18 @@ def read_plane(path):
     return pv.read(path).extract_surface(algorithm="dataset_surface")
 
 
-def mirrored(poly, normal_axis):
-    """Mirror a quarter plane (normal along normal_axis) across its two in-plane axes."""
-    parts = [poly]
+def mirrored(poly, normal_axis, radius):
+    """Mirror a quarter plane (normal along normal_axis) across its two in-plane
+    axes, keeping the cells within radius of the origin."""
+    r = np.linalg.norm(poly.cell_centers().points, axis=1)
+    parts = [poly.extract_cells(np.nonzero(r < radius)[0]).extract_surface(algorithm="dataset_surface")]
     for axis in range(3):
         if axis == normal_axis:
             continue
         n = [0.0, 0.0, 0.0]
         n[axis] = 1.0
         parts += [p.reflect(n, point=(0, 0, 0)) for p in parts]
-    disk = pv.merge(parts)
-    disk.point_data["r"] = np.linalg.norm(disk.points, axis=1)
-    return disk.clip_scalar("r", value=DISK_RADIUS)
+    return pv.merge(parts)
 
 
 def render_3d(plotter, planes, R_exact, azimuth, rho_max):
@@ -161,7 +161,7 @@ def main():
                 c = p.cell_centers().points
                 r_all.append(np.linalg.norm(c, axis=1))
                 rho_all.append(np.asarray(p.cell_data["RHO"]))
-                polys.append(mirrored(p, axis))
+                polys.append(mirrored(p, axis, min(DISK_RADIUS, 1.2 * float(R_of(max(t, 1e-6))) + 0.03)))
             r_cells, rho_cells = np.concatenate(r_all), np.concatenate(rho_all)
             if t > 0:
                 history.append((t, shock_radius(r_cells, rho_cells, args.rho0)))
