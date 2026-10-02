@@ -64,3 +64,25 @@ TEST(IOTest, BoundaryZoneOutputCarriesAdjacentCellValues) {
     }
     std::filesystem::remove_all(dir);
 }
+
+TEST(IOTest, IntegerValuedRealInputsAreAccepted) {
+    // TOML integers for real parameters must not be silently replaced by defaults
+    const std::string input =
+        "[run]\nn_steps = 1\ncfl = 1\n"
+        "[mesh]\ntype = \"cartesian\"\nNx = 4\nNy = 2\nLx = 2\nLy = 1\n"
+        "[initialize]\ntype = \"constant\"\nu = [1, 0]\np = 1\nT = 1\n"
+        "[[boundaries]]\nname = \"left\"\ntype = \"extrapolation\"\n"
+        "[[boundaries]]\nname = \"right\"\ntype = \"extrapolation\"\n"
+        "[[boundaries]]\nname = \"top\"\ntype = \"symmetry\"\n"
+        "[[boundaries]]\nname = \"bottom\"\ntype = \"symmetry\"\n"
+        "[numerics.face_reconstruction]\ntype = \"FO\"\n"
+        "[physics]\ntype = \"euler\"\ngamma = 1.4\np_ref = 1\nT_ref = 1\nrho_ref = 1\n";
+    Solver solver;
+    solver.init(parse_toml(input));
+    rtype x_max = 0.0;
+    for (uint32_t i = 0; i < solver.get_mesh()->n_nodes; i++) x_max = std::max(x_max, solver.get_mesh()->h_node_coords(i, 0));
+    EXPECT_DOUBLE_EQ(x_max, 2.0);
+    solver.copy_device_to_host();
+    EXPECT_DOUBLE_EQ(solver.h_conservatives(0, 1), 1.0);
+    EXPECT_THROW(Solver().init(parse_toml(input + "[source]\ngravity = [\"down\", 0]\n")), std::runtime_error);
+}

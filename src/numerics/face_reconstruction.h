@@ -211,6 +211,7 @@ class TENO : public FaceReconstruction {
         rtype C_T = -1.0;  // Fixed cutoff; negative selects the adaptive cutoff
         bool characteristic = true;
         bool bound_preserving = false;
+        rtype max_condition = 1.0e8;
 
         // Per-cell precomputed data
         Kokkos::View<rtype *> scale;                       // h = sqrt(V)
