@@ -147,7 +147,9 @@ TEST(MPITest, PeriodicRunsMatchSerialAcrossSeamsCutByThePartition) {
     const std::string walls = "[[boundaries]]\nname = \"top\"\ntype = \"symmetry\"\n"
                               "[[boundaries]]\nname = \"bottom\"\ntype = \"wall_adiabatic\"\n";
     const std::string teno = periodic_box("cartesian", "type = \"TENO\"\norder = 5\n", EULER, "[\"x\", \"y\"]", none, 15);
-    if (comm::size() > 1) EXPECT_GT(seam_faces_cut_by_partition(teno), 0u);
+    if (comm::size() > 1) {
+        EXPECT_GT(seam_faces_cut_by_partition(teno), 0u);
+    }
     expect_matches_serial(teno);
     expect_matches_serial(periodic_box("cartesian_tri", "type = \"TENO\"\norder = 4\n", EULER, "[\"x\"]", walls, 10));
     expect_matches_serial(periodic_box("cartesian_tri", "type = \"MUSCL\"\n", NS, "[\"x\", \"y\"]", none, 20));
