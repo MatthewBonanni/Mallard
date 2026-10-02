@@ -453,9 +453,6 @@ void Solver::init_output() {
         if (integral_monitor.interval == 0) {
             throw std::runtime_error("integrals: interval must be positive.");
         }
-        if (!viscous_gradients.is_allocated()) {
-            viscous_gradients = Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]>("viscous_gradients", mesh->n_cells);
-        }
         const std::string file = toml::find_or<std::string>(input, "integrals", "file", "integrals.csv");
         if (comm::is_root()) {
             const std::filesystem::path parent = std::filesystem::path(file).parent_path();
@@ -487,7 +484,7 @@ void Solver::allocate_memory() {
                                                               face_reconstruction->n_face_quadrature_points());
     face_flux = Kokkos::View<rtype *[N_CONSERVATIVE]>("face_flux", mesh->n_faces);
     cfl_local = Kokkos::View<rtype *>("cfl_local", mesh->n_cells);
-    if (physics.is_viscous()) {
+    if (physics.is_viscous() || input.contains("integrals")) {
         viscous_gradients = Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]>("viscous_gradients", mesh->n_cells);
         LSQGradientFunctor gradient_functor{mesh->offsets_faces_of_cell, mesh->faces_of_cell,
                                             mesh->cells_of_face, mesh->cell_coords, mesh->face_coords,
@@ -949,12 +946,7 @@ std::array<rtype, 4> Solver::integrate_flow_statistics() {
         phys.compute_W_from_conservatives(W_c, cons);
         FOR_I_CONSERVATIVE W(i_cell, i) = W_c[i];
     });
-    LSQGradientFunctor gradient_functor{mesh->offsets_faces_of_cell, mesh->faces_of_cell,
-                                        mesh->cells_of_face, mesh->cell_coords, mesh->face_coords,
-                                        mesh->face_normals, boundary_data, W_cells, viscous_gradients};
-    LSQVertexGradientFunctor vertex_gradient_functor{gradient_functor, mesh->offsets_cells_of_cell,
-                                                     mesh->cells_of_cell};
-    Kokkos::parallel_for("statistics_gradients", mesh->n_owned(), vertex_gradient_functor);
+    Kokkos::parallel_for("statistics_gradients", mesh->n_owned(), viscous_gradient);
     FlowStatisticsFunctor functor{W_cells, viscous_gradients, mesh->cell_volume};
     FlowStatisticsFunctor::value_type result;
     Kokkos::parallel_reduce("statistics", mesh->n_owned(), functor, result);
