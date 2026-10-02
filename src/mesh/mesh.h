@@ -379,15 +379,21 @@ class Mesh {
         Kokkos::View<int32_t *[2]>::host_mirror_type h_cells_of_face;
     protected:
     private:
-        void init_from_connectivity_3d(const std::vector<std::array<rtype, N_DIM>> & nodes,
-                                       const std::vector<std::vector<uint32_t>> & cells,
-                                       const std::vector<BoundaryFace> & boundary_faces,
-                                       const std::string & unlisted_zone);
+        /**
+         * @brief Positively oriented copy of 3D cells (Gmsh/VTK convention), as
+         *        CSR offsets and node lists.
+         */
+        static void orient_cells_3d(const std::vector<std::array<rtype, N_DIM>> & nodes,
+                                    const std::vector<std::vector<uint32_t>> & cells,
+                                    std::vector<uint32_t> & offsets, std::vector<uint32_t> & cell_nodes);
 
         void allocate_and_fill(const std::vector<std::array<rtype, N_DIM>> & nodes,
-                               const std::vector<std::vector<uint32_t>> & cell_nodes,
-                               const std::vector<std::vector<uint32_t>> & cell_faces,
-                               const std::vector<std::vector<uint32_t>> & face_node_lists,
+                               const std::vector<uint32_t> & cell_node_offsets,
+                               const std::vector<uint32_t> & cell_nodes,
+                               const std::vector<uint32_t> & cell_face_offsets,
+                               const std::vector<uint32_t> & cell_faces,
+                               const std::vector<uint32_t> & face_node_offsets,
+                               const std::vector<uint32_t> & face_nodes,
                                const std::vector<std::array<int32_t, 2>> & face_cells,
                                const std::vector<uint32_t> & interior,
                                const std::map<std::string, std::vector<uint32_t>> & zone_faces);
