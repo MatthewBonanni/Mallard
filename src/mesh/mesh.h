@@ -24,7 +24,7 @@
 #include "zone.h"
 
 enum class MeshType {
-    FILE,
+    FROM_FILE,
     CARTESIAN,
     CARTESIAN_TRI,
     WEDGE,
@@ -35,7 +35,7 @@ enum class MeshType {
 };
 
 static const std::unordered_map<std::string, MeshType> MESH_TYPES = {
-    {"file", MeshType::FILE},
+    {"file", MeshType::FROM_FILE},
     {"cartesian", MeshType::CARTESIAN},
     {"cartesian_tri", MeshType::CARTESIAN_TRI},
     {"wedge", MeshType::WEDGE},
@@ -46,7 +46,7 @@ static const std::unordered_map<std::string, MeshType> MESH_TYPES = {
 };
 
 static const std::unordered_map<MeshType, std::string> MESH_NAMES = {
-    {MeshType::FILE, "file"},
+    {MeshType::FROM_FILE, "file"},
     {MeshType::CARTESIAN, "cartesian"},
     {MeshType::CARTESIAN_TRI, "cartesian_tri"},
     {MeshType::WEDGE, "wedge"},
@@ -391,15 +391,21 @@ class Mesh {
         void init_box(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, bool triangles, bool wedge);
         // Local cells in increasing global id: the first cell to visit a face becomes its cell 0
         std::vector<uint32_t> cells_by_global_id() const;
-        void init_from_connectivity_3d(const std::vector<std::array<rtype, N_DIM>> & nodes,
-                                       const std::vector<std::vector<uint32_t>> & cells,
-                                       const std::vector<BoundaryFace> & boundary_faces,
-                                       const std::string & unlisted_zone);
+        /**
+         * @brief Positively oriented copy of 3D cells (Gmsh/VTK convention), as
+         *        CSR offsets and node lists.
+         */
+        static void orient_cells_3d(const std::vector<std::array<rtype, N_DIM>> & nodes,
+                                    const std::vector<std::vector<uint32_t>> & cells,
+                                    std::vector<uint32_t> & offsets, std::vector<uint32_t> & cell_nodes);
 
         void allocate_and_fill(const std::vector<std::array<rtype, N_DIM>> & nodes,
-                               const std::vector<std::vector<uint32_t>> & cell_nodes,
-                               const std::vector<std::vector<uint32_t>> & cell_faces,
-                               const std::vector<std::vector<uint32_t>> & face_node_lists,
+                               const std::vector<uint32_t> & cell_node_offsets,
+                               const std::vector<uint32_t> & cell_nodes,
+                               const std::vector<uint32_t> & cell_face_offsets,
+                               const std::vector<uint32_t> & cell_faces,
+                               const std::vector<uint32_t> & face_node_offsets,
+                               const std::vector<uint32_t> & face_nodes,
                                const std::vector<std::array<int32_t, 2>> & face_cells,
                                const std::vector<uint32_t> & interior,
                                const std::map<std::string, std::vector<uint32_t>> & zone_faces);
@@ -408,7 +414,7 @@ class Mesh {
                                         uint8_t n_order,
                                         std::vector<uint32_t> & neighbors) const;
 
-        MeshType type = MeshType::FILE;
+        MeshType type = MeshType::FROM_FILE;
         std::vector<CellZone> m_cell_zones;
         std::vector<FaceZone> m_face_zones;
 };

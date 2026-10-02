@@ -92,7 +92,8 @@ struct SlabLayout {
     uint32_t nx, ny, nz;
     std::vector<uint64_t> cells_before, apexes_before;  // per slab, prefix sums
 
-    SlabLayout(uint32_t nx, uint32_t ny, uint32_t nz, MeshType kind) : kind(kind), nx(nx), ny(ny), nz(nz) {
+    SlabLayout(uint32_t nx_in, uint32_t ny_in, uint32_t nz_in, MeshType kind_in)
+        : kind(kind_in), nx(nx_in), ny(ny_in), nz(nz_in) {
         cells_before.assign(nx + 1, 0);
         apexes_before.assign(nx + 1, 0);
         for (uint32_t i = 0; i < nx; i++) {
@@ -247,7 +248,7 @@ MeshBlock read_mesh_block(const toml::value & input) {
     const auto it = MESH_TYPES.find(type_str);
     if (it == MESH_TYPES.end()) throw std::runtime_error("Unknown mesh type: " + type_str + ".");
     const MeshType type = it->second;
-    if (type == MeshType::FILE) {
+    if (type == MeshType::FROM_FILE) {
         const std::string filename = toml::find_or<std::string>(input, "mesh", "filename", "mesh.msh");
         return is_hdf5_mesh(filename) ? read_mesh_h5(filename) : read_gmsh_block(filename);
     }
@@ -289,7 +290,7 @@ constexpr int VERSION = 1;
 /** @brief Owns an HDF5 identifier. */
 class Handle {
     public:
-        Handle(hid_t id, herr_t (*close)(hid_t), const std::string & what) : id(id), close(close) {
+        Handle(hid_t id_in, herr_t (*close_in)(hid_t), const std::string & what) : id(id_in), close(close_in) {
             if (id < 0) throw std::runtime_error("HDF5: " + what + " failed.");
         }
         ~Handle() { close(id); }
