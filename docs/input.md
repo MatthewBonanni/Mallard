@@ -92,6 +92,7 @@ the zone's faces whose centers satisfy the expression.
 | `C_T` | (`TENO`) Fixed TENO cutoff; adaptive (1e-10 to 1e-6) if omitted |
 | `characteristic` | (`TENO`) Select stencils on characteristic variables, default true |
 | `max_condition` | (`TENO`) Stencils grow until the least-squares system's condition estimate is below this, default 1e8 |
+| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options |
 | `bound_preserving` | (`TENO`) Scale troubled-cell polynomials to keep density and pressure within the neighbors' range, default false |
 
 ## `[source]`
