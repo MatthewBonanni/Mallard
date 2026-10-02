@@ -22,7 +22,7 @@ repo="$(cd "$(dirname "$0")/.." && pwd)"
 remote_root="mallard-zero-priority"
 remote_case="$remote_root/cases/$(basename "$case_dir")"
 
-ssh -o ConnectTimeout=10 "$host" true
+ssh -o ConnectTimeout=10 "$host" mkdir -p "$remote_root/src" "$remote_case"
 
 rsync -az --delete --exclude build --exclude 'build-*' --exclude runs --exclude .venv \
     "$repo/" "$host:$remote_root/src/"
