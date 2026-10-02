@@ -940,6 +940,7 @@ struct FlowStatisticsFunctor {
 
 std::array<rtype, 4> Solver::integrate_flow_statistics() {
     halo.exchange(conservatives);
+    update_boundary_states(t);
     const Euler phys = physics;
     StateView U = conservatives;
     Kokkos::View<rtype *[N_CONSERVATIVE]> W = W_cells;

@@ -3,7 +3,7 @@
 
     animate_taylor_green.py SOLUT_DIR integrals.csv OUTPUT_BASE
         [--ref spectral_Re1600_512.gdiag] [--q-factor 0.5] [--width 1920] [--fps 15]
-        [--orbit 150] [--gif-width 720]
+        [--orbit 150] [--gif-width 720] [--compare CSV LABEL ...] [--hold 2]
 
 SOLUT_DIR holds the VTU (or PVTU) series of a run of
 examples/taylor_green_3d, with U on the octant [0, pi]^3 of hexahedra. Each
@@ -163,11 +163,17 @@ def main():
     ap.add_argument("--orbit", type=float, default=150.0, help="Camera orbit over the whole animation, degrees")
     ap.add_argument("--gif-width", type=int, default=720)
     ap.add_argument("--every", type=int, default=1)
+    ap.add_argument("--compare", nargs=2, action="append", default=[], metavar=("CSV", "LABEL"),
+                    help="Another run's integrals to trace in the panel (e.g. a coarser mesh)")
+    ap.add_argument("--hold", type=float, default=2.0, help="Seconds to hold the last frame")
     args = ap.parse_args()
 
     files = snapshot_files(args.solut)[::args.every]
     t, E, eps, _ = load(args.integrals, 1.0 / 1600)
     curves = [(t, eps, args.label, "#ff9e3d")]
+    for (path, label), color in zip(args.compare, ["#58a6ff", "#3fb950", "#d2a8ff"]):
+        tc, _, ec, _ = load(path, 1.0 / 1600)
+        curves.append((tc, ec, label, color))
     ref = None
     if args.ref:
         tr, _, er = load_reference(args.ref)
@@ -193,6 +199,8 @@ def main():
             if abs(t_now - still_t) < still_dt:
                 still, still_dt = frame, abs(t_now - still_t)
             print(f"frame {k + 1}/{len(files)} t = {t_now:.2f}", flush=True)
+        for j in range(round(args.hold * args.fps)):
+            imageio.imwrite(os.path.join(tmp, f"f{len(files) + j:05d}.png"), frame)
         write_mp4(os.path.join(tmp, "f%05d.png"), args.output + ".mp4", args.fps)
         if args.gif_width > 0:
             write_gif(os.path.join(tmp, "f%05d.png"), args.output + ".gif", args.fps, args.gif_width)

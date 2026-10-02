@@ -1,6 +1,6 @@
 # Tools
 
-Python scripts need numpy, scipy, matplotlib, imageio and imageio-ffmpeg.
+Python scripts need numpy, scipy, matplotlib, imageio and imageio-ffmpeg; the 3D animations also need pyvista.
 
 | Script | Purpose |
 |---|---|
@@ -13,3 +13,5 @@ Python scripts need numpy, scipy, matplotlib, imageio and imageio-ffmpeg.
 | `animate_grid.py` | Several cases side by side in one animation, synchronized in normalized time, with optional wall-profile panels against reference data. `hero_grid.json` makes the README animation (run from the repository root after running the three examples at the resolutions given in their headers) |
 | `make_cylinder_mesh.py` | Gmsh O-grid around a cylinder |
 | `make_mallard_mesh.py` | Triangle mesh (via the gmsh Python module) around a flying mallard silhouette |
+| `plot_taylor_green.py` | Taylor-Green vortex: kinetic energy and dissipation rate (`-dE/dt` and enstrophy-based) from `[integrals]` output against the spectral DNS reference |
+| `animate_taylor_green.py` | Taylor-Green vortex animation: Q-criterion isosurfaces on the box mirrored from the computed octant, orbiting camera, and the dissipation rate tracing the reference |
