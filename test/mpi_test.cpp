@@ -133,8 +133,10 @@ uint64_t seam_faces_cut_by_partition(const std::string & input) {
 std::string periodic_box(const std::string & mesh, const std::string & recon, const std::string & physics,
                          const std::string & dirs, const std::string & boundaries, uint32_t n_steps) {
     std::string input = box_input(mesh, recon, physics, boundaries, n_steps);
+    // A Hilbert partition always cuts the seams; a graph partition of a torus need not
     const std::string anchor = "Ly = 0.8\n";
-    return input.replace(input.find(anchor), anchor.size(), anchor + "periodic = " + dirs + "\n");
+    return input.replace(input.find(anchor), anchor.size(), anchor + "periodic = " + dirs + "\n") +
+           "[parallel]\npartitioner = \"hilbert\"\n";
 }
 
 } // namespace
