@@ -65,6 +65,7 @@ the zone's faces whose centers satisfy the expression.
 | `upt` | Inflow with fixed velocity, pressure and temperature | `u`, `p`, `T` |
 | `dirichlet` | Exterior state from expressions in `x`, `y`, `t`, evaluated at face centers at every stage | `rho`, `u` (two expressions), `p` |
 | `p_out` | Outlet: imposes `p` if the outflow is subsonic | `p` |
+| `p_out_average` | Outlet for mixed subsonic/supersonic flow: on subsonic faces, shifts the local pressure so that its area average over the boundary equals `p`, preserving the transverse profile | `p` |
 
 ## `[numerics]`
 

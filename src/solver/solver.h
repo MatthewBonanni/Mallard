@@ -120,6 +120,7 @@ class Solver {
         void init_solution_analytical();
         void init_solution_restart();
         void update_boundary_states(rtype t_eval);
+        void update_average_pressure_outlets(StateView solution);
         void init_sources();
         void update_source_field(rtype t_eval);
         void allocate_memory();
@@ -155,6 +156,7 @@ class Solver {
         Euler physics;
         BoundaryData boundary_data;
         std::vector<DirichletBoundary> dirichlet_boundaries;
+        std::vector<std::pair<int32_t, Kokkos::View<uint32_t *>>> average_pressure_outlets;  // (bc index, faces)
         Kokkos::View<rtype *[N_DIM + 2]>::host_mirror_type h_face_state;
         Kokkos::View<int32_t *>::host_mirror_type h_face_state_index;
         rtype t_boundary_states;
