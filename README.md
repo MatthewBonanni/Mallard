@@ -8,7 +8,7 @@ Mallard is a high-order unstructured finite volume solver for the compressible E
 
 ![Mallard simulations](./docs/images/hero.gif)
 
-*Double Mach reflection, a 2D Riemann problem and the Daru & Tenaud viscous shock tube ([`examples/`](examples)), with the shock tube's wall density at t = 1 landing on the grid-converged reference of [Zhou et al.](https://arxiv.org/abs/1705.09062).*
+*Double Mach reflection, a 2D Riemann problem, the Daru & Tenaud viscous shock tube and, in 3D, the Taylor-Green vortex at Re = 1600 ([`examples/`](examples)): the shock tube's wall density at t = 1 lands on the grid-converged reference of [Zhou et al.](https://arxiv.org/abs/1705.09062), and the vortex's kinetic-energy dissipation rate follows the 512³ spectral DNS of the [High-Order CFD Workshop](https://cfd.ku.edu/hiocfd/).*
 
 > **NOTE:** Mallard is a **work in progress**: 3D support is new, MPI is in progress, and GPU performance has only begun to be tuned.
 
@@ -49,7 +49,7 @@ Pick the Kokkos backend at configure time, for example `-DKokkos_ENABLE_OPENMP=O
 | `USE_SYSTEM_KOKKOS` | `ON` | Use an installed Kokkos instead of the submodule |
 | `Mallard_DIM` | `2` | Spatial dimension, `2` or `3` (one binary per dimension) |
 | `Mallard_USE_DOUBLE` | `ON` | Double precision (single precision otherwise) |
-| `Mallard_ENABLE_MPI` | `OFF` | Distributed memory with MPI: `mpirun -n N Mallard -i input.toml` splits the mesh between ranks; no rank holds the whole mesh (read meshes from HDF5 files to scale) |
+| `Mallard_ENABLE_MPI` | `OFF` | Distributed memory with MPI: `mpirun -n N Mallard -i input.toml` splits the mesh between ranks; with generated meshes or HDF5 mesh files (`mallard-mesh-convert`) no rank ever holds the whole mesh, while Gmsh files are read whole by every rank |
 | `Mallard_GPU_AWARE_MPI` | `OFF` | With MPI on GPUs: hand device buffers to a CUDA-aware MPI instead of staging halos through host memory |
 | `Mallard_ENABLE_KAMINPAR` | `OFF` | With MPI: partition the mesh with the [dKaMinPar](https://github.com/KaHIP/KaMinPar) graph partitioner (fetched at configure time; needs oneTBB) instead of a Hilbert curve |
 | `Mallard_ENABLE_HDF5` | `OFF` | HDF5 mesh files (parallel HDF5 with MPI, when available) and the `mallard-mesh-convert` tool |
