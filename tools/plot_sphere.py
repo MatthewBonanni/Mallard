@@ -30,7 +30,9 @@ def normal_shock_pressure(mach, gamma):
 
 def series(slices, name="z0"):
     text = open(os.path.join(slices, name + ".pvd")).read()
-    return [(float(t), os.path.join(slices, f)) for t, f in re.findall(r'timestep="([^"]+)"[^>]*file="([^"]+)"', text)]
+    entries = re.findall(r'timestep="([^"]+)"[^>]*file="([^"]+)"', text)
+    # A run still in progress may list a snapshot not yet copied
+    return [(float(t), os.path.join(slices, f)) for t, f in entries if os.path.exists(os.path.join(slices, f))]
 
 
 def stagnation_line(mesh, half_width=0.03):
