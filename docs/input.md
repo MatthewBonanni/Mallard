@@ -95,6 +95,17 @@ the zone's faces whose centers satisfy the expression.
 | `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options |
 | `bound_preserving` | (`TENO`) Scale troubled-cell polynomials to keep density and pressure within the neighbors' range, default false |
 
+## `[[forces]]`
+
+Write the force of the fluid on a boundary zone to a CSV file
+(`step, t, Fx_pressure, Fy_pressure, Fx_viscous, Fy_viscous`, per unit depth).
+
+| Key | Description |
+|---|---|
+| `zone` | Boundary zone name |
+| `interval` | Every this many steps, default 1 |
+| `file` | Output file, default `forces_<zone>.csv` |
+
 ## `[source]`
 
 Optional source terms, added per unit volume.
