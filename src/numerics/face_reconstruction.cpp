@@ -298,7 +298,7 @@ struct LimiterFunctor {
             for (uint32_t k = k_begin; k < k_end; k++) {
                 const uint32_t i_face = neighbors.faces_of_cell(k);
                 // The face centroid is in its cell 0's frame
-                const uint8_t s = (neighbors.cells_of_face(i_face, 1) == (int32_t)i_cell) ? neighbors.face_shift(i_face) : 0;
+                const uint8_t s = (neighbors.cells_of_face(i_face, 1) == static_cast<int32_t>(i_cell)) ? neighbors.face_shift(i_face) : 0;
                 rtype r[N_DIM];
                 FOR_I_DIM r[i] = (neighbors.face_coords(i_face, i) - neighbors.shifts(s, i)) - neighbors.cell_coords(i_cell, i);
                 FOR_I_CONSERVATIVE {
