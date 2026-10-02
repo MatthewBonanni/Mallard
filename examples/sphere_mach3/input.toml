@@ -8,8 +8,10 @@
 # is axisymmetric; y = 0 and z = 0 are symmetry planes), refined on the sphere
 # and through the shock layer. Generate it first:
 #   python ../../tools/make_sphere_mesh.py sphere.msh
-# (about ... tetrahedra). Free stream rho = 1.4, p = 1, so the sound speed is 1
-# and u = 3; RHLL fluxes (carbuncle-free) with bound-preserving TENO5.
+# (about 800,000 tetrahedra). Free stream rho = 1.4, p = 1, so the sound speed
+# is 1 and u = 3; HLL fluxes with bound-preserving TENO5. (With RHLL a
+# carbuncle grows on the stagnation line, which here is the corner of the two
+# symmetry planes, after t ~ 1.6; see issue #80.)
 #
 # Run:
 #   ../../build3d/src/Mallard -i input.toml
@@ -19,7 +21,7 @@
 # sits at x = ... (Delta / R = ..., ...% from Billig). Takes ... on one A100.
 
 [run]
-t_stop = 4.0
+t_stop = 3.0
 cfl = 0.6
 
 [mesh]
@@ -63,7 +65,7 @@ name = "symmetry_z"
 type = "symmetry"
 
 [numerics]
-riemann_solver = "RHLL"
+riemann_solver = "HLL"
 time_integrator = "SSPRK3"
 check_nan = true
 
@@ -71,7 +73,6 @@ check_nan = true
 type = "TENO"
 order = 5
 bound_preserving = true
-cache_file = "teno_cache.bin"
 
 [physics]
 type = "euler"
