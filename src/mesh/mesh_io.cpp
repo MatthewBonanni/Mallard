@@ -32,7 +32,7 @@ FaceKey face_key(const Nodes & nodes, size_t n) {
     FaceKey key;
     key.fill(NO_NODE);
     for (size_t k = 0; k < n; k++) key[k] = nodes[k];
-    std::sort(key.begin(), key.begin() + n);
+    std::sort(key.begin(), key.end());  // the NO_NODE padding sorts last
     return key;
 }
 
