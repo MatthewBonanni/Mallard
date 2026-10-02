@@ -118,7 +118,7 @@ TEST_P(PeriodicBox3D, PreservesUniformFlowAndConservesMassMomentumAndEnergy) {
     uniform->run();
     uniform->copy_device_to_host();
     const double U[4] = {1.3, 1.3 * 0.4, -1.3 * 0.25, 1.3 * 0.1};
-    for (uint32_t c = 0; c < uniform->get_mesh()->n_cells; c++) {
+    for (uint32_t c = 0; c < uniform->get_mesh()->n_owned(); c++) {
         for (int i = 0; i < 4; i++) EXPECT_NEAR(uniform->h_conservatives(c, i), U[i], 1e-12);
     }
     // With no boundary at all, momentum is conserved too
