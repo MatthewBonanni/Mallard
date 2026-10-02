@@ -44,7 +44,7 @@ BoundaryCondition BoundaryCondition::from_input(const toml::value & input, const
         bc.data[1] = u[0];
         bc.data[2] = u[1];
         bc.data[3] = p;
-    } else if (bc.type == BoundaryType::P_OUT) {
+    } else if (bc.type == BoundaryType::P_OUT || bc.type == BoundaryType::P_OUT_AVERAGE) {
         require("p");
         bc.data[3] = toml::find<rtype>(input, "p");
     } else if (bc.is_wall()) {
