@@ -54,7 +54,8 @@ struct LSQGradientFunctor {
             rtype d = 0.0;
             FOR_I_DIM d += (face_coords(i_face, i) - cell_coords(i_cell, i)) * n[i];
             const BoundaryCondition & bc = boundaries.bcs(boundaries.face_bc(i_face));
-            if (bc.type == BoundaryType::DIRICHLET || bc.type == BoundaryType::UPT) {
+            if (bc.type == BoundaryType::DIRICHLET || bc.type == BoundaryType::UPT ||
+                bc.type == BoundaryType::FARFIELD) {
                 // A prescribed state is the value at the face centroid
                 FOR_I_DIM dx[i] = face_coords(i_face, i) - cell_coords(i_cell, i);
                 boundaries.ghost_W(i_face, W_i, n, W_j);

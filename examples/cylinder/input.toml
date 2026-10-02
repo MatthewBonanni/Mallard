@@ -27,17 +27,10 @@ type = "wall_adiabatic"
 
 [[boundaries]]
 name = "farfield"
-type = "upt"
-where = "x < 0"
+type = "farfield"
 u = [0.2, 0.0]
 p = 0.7142857142857143
 T = 0.7142857142857143
-
-[[boundaries]]
-name = "farfield"
-type = "p_out"
-where = "x >= 0"
-p = 0.7142857142857143
 
 [numerics]
 riemann_solver = "HLLC"
