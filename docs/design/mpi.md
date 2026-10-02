@@ -1,6 +1,6 @@
 # Design: distributed memory (MPI)
 
-Status: proposal, for review. Tracks issue #2.
+Status: accepted design (reviewed in #32). Tracks issue #2.
 
 ## Goals
 
@@ -26,6 +26,13 @@ Status: proposal, for review. Tracks issue #2.
 
 A thin `Comm` class wraps MPI (rank, size, `allreduce` min/sum/max, `alltoallv`, neighbor exchange). When MPI is disabled (`Mallard_ENABLE_MPI=OFF`), it is a one-rank stub, so the rest of the code has no `#ifdef`s. One rank per GPU: Kokkos maps devices by local rank (`--kokkos-map-device-id-by=mpi_rank`).
 
+The per-stage halo exchange and the time-step `allreduce` go through a `HaloExchange` interface with two backends:
+
+- **MPI** (default): nonblocking point-to-point; device buffers passed directly with GPU-aware MPI, or staged through host memory otherwise.
+- **NCCL** (optional, `Mallard_ENABLE_NCCL`): `ncclSend`/`ncclRecv` inside a group and `ncclAllReduce`, enqueued on the Kokkos execution stream, so the exchange is stream-ordered with the kernels (no host synchronization) and can be captured in a CUDA graph. The NCCL communicator is created from the MPI communicator.
+
+Setup-time communication (partitioning, migration, I/O) always uses MPI.
+
 ### 2. Mesh input
 
 - **Format:** an HDF5 mesh file with global arrays: node coordinates, cell types and connectivity (CSR), boundary faces with zone ids, and zone names. Each rank reads a contiguous block of cells and the nodes it references, with collective parallel HDF5 I/O. HDF5 is already an optional dependency.
@@ -46,7 +53,7 @@ A `Partitioner` interface with two backends:
 | **dKaMinPar** ([KaHIP/KaMinPar](https://github.com/KaHIP/KaMinPar), MIT, C++20; `FetchContent`) | Default when available. Distributed, scales to trillion-edge graphs, guarantees balance. Built with 64-bit ids for hero meshes. New dependency: oneTBB. |
 | **Hilbert curve** (built in) | No-dependency fallback; also used everywhere to order cells within a rank for memory locality. |
 
-Vertex weights model cost: a base weight per cell plus a term for the TENO stencil size. Dynamic rebalancing (troubled cells move with shocks) is out of scope; static weights are enough to start. ParMETIS or PT-Scotch can be added behind the same interface if needed.
+Vertex weights model cost: a base weight per cell plus a term for the TENO stencil size. ParMETIS or PT-Scotch can be added behind the same interface if needed.
 
 ### 5. Migration
 
@@ -77,6 +84,8 @@ Per right-hand-side evaluation:
 2. **Overlap:** reconstruct and compute fluxes for owned interior cells and their faces while messages are in flight.
 3. Wait, unpack, then reconstruct the near-boundary owned cells and halo layer 1, and compute the remaining faces.
 
+Halo layer 1 is reconstructed redundantly so that a single exchange per stage suffices. The alternative, exchanging reconstructed face states at partition faces, would save that layer's work (a surface-to-volume fraction of the TENO cost) but adds a second, dependent message round per stage; at thousands of ranks the extra latency costs more than the redundant work. The choice is contained in the exchange plan and can be revisited with measurements.
+
 Faces between an owned and a halo cell are computed by both ranks. Each keeps only its owned side's contribution, since residuals of halo cells are never used. This costs a few redundant face fluxes but needs no reverse exchange.
 
 Global reductions become `allreduce` calls: time step (min), NaN check, conservation sums, force monitors, average-pressure outlets.
@@ -93,6 +102,16 @@ These are found during per-rank precomputation on owned plus halo cells, and wit
 
 - **Solution output:** per-rank VTU pieces plus a `.pvtu` index and the `.pvd` series to start. At scale, HDF5 with an XDMF index (one shared file per snapshot, collective writes).
 - **Restart:** HDF5, written by global cell id, so a run can restart on a **different rank count**. This is essential for hero runs, which rarely get the same allocation twice.
+
+### 10. Room for dynamic load balancing
+
+Dynamic rebalancing (troubled cells, and so the TENO cost, move with shocks) is deferred, but the design keeps it cheap to add:
+
+- **Setup is a function of a distributed cell set**, not of a file: `build_local(cells owned by this rank) -> local mesh, halo, exchange plan, stencils, boundary data`. Startup calls it after the first partition; a rebalance would call it again after migrating cells.
+- **Global ids everywhere** (cells, nodes, faces of boundary zones), and **state migrates with cells** through the same `alltoallv` as setup, keyed by global id.
+- **The partitioner takes per-cell weights from the caller**, so measured costs (e.g. the troubled-cell fraction from the last N steps) can replace the static model. KaMinPar can also refine an existing partition rather than start from scratch.
+- **Per-rank derived data** (stencils, pseudo-inverses, halo plans) is cached by global id where it is expensive, so a rebalance recomputes only what moved.
+- **No assumption that the partition is fixed** in output or restart: both are keyed by global id.
 
 ## Testing
 
@@ -111,11 +130,11 @@ These are found during per-rank precomputation on owned plus halo cells, and wit
 2. **Correct multi-rank runs at small scale:** global Gmsh read on every rank, Hilbert partition, halo, exchange, reductions. Rank-count-independence tests for FO, MUSCL, TENO and viscous fluxes.
 3. **Output and restart:** `.pvtu` output; HDF5 restart independent of the partition.
 4. **Scalable setup:** HDF5 mesh format and converter, distributed read, distributed dual graph, dKaMinPar, migration.
-5. **Performance:** communication/computation overlap, GPU-aware MPI, single-node 8-GPU scaling study, then launch-overhead work (CUDA graphs) where it matters at small per-rank sizes.
+5. **Performance:** communication/computation overlap, GPU-aware MPI, the NCCL backend, single-node 8-GPU scaling study, then launch-overhead work (CUDA graphs, which the stream-ordered NCCL exchange allows) where it matters at small per-rank sizes.
 6. **Multi-node:** runs across nodes; HDF5/XDMF solution output.
 
-## Open questions
+## Decisions from review
 
-1. **Halo depth vs. a second exchange.** The design reconstructs halo layer 1 redundantly, so one exchange per stage suffices. The alternative exchanges reconstructed face states at partition faces, which saves one halo layer and that layer's TENO work but adds a second message round per stage. At thousands of ranks, latency favors one exchange.
-2. **NCCL instead of MPI for halo exchange on NVIDIA GPUs.** MPI stays the baseline. NCCL could be an optional backend behind `Comm` if GPU-aware MPI underperforms on the target cluster.
-3. **Dynamic load balancing.** Troubled-cell cost moves with shocks. Repartitioning every N steps is possible later with the same migration code.
+1. One halo exchange per stage with a redundant halo-layer-1 reconstruction (section 7).
+2. Optional NCCL backend for the halo exchange and reductions (section 1).
+3. Dynamic load balancing deferred, with the setup structured to allow it (section 10).
