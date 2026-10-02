@@ -15,7 +15,7 @@ Mallard is a high-order unstructured finite volume solver for the compressible E
 ## Features
 
 - Compressible Euler and Navier-Stokes equations (calorically perfect gas, constant or Sutherland viscosity)
-- Unstructured meshes of triangles and quadrilaterals
+- Unstructured meshes of triangles, quadrilaterals or both, read from Gmsh files or generated
 - Face reconstruction:
   - First order
   - Second-order MUSCL with least-squares gradients and Barth-Jespersen or Venkatakrishnan limiting

@@ -40,7 +40,7 @@ void Mesh::init(const toml::value & input) {
 
     if (get_type() == MeshType::FILE) {
         std::string filename = toml::find_or<std::string>(input, "mesh", "filename", "mesh.msh");
-        throw std::runtime_error("MeshType::FILE not implemented.");
+        this->init_file(filename);
     } else if (get_type() == MeshType::CARTESIAN) {
         uint32_t Nx = toml::find_or<uint32_t>(input, "mesh", "Nx", 100);
         uint32_t Ny = toml::find_or<uint32_t>(input, "mesh", "Ny", 100);

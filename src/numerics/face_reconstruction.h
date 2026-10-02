@@ -19,7 +19,6 @@
 
 #include "common_typedef.h"
 #include "mesh.h"
-#include "basis.h"
 #include "quadrature.h"
 #include "boundary.h"
 #include "gradient.h"

@@ -17,7 +17,6 @@
 #include <toml.hpp>
 
 #include "common.h"
-#include "basis.h"
 #include "quadrature.h"
 
 FaceReconstruction::FaceReconstruction() {
