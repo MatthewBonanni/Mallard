@@ -80,18 +80,36 @@ def main():
     aspect = (extent[1] - extent[0]) / (extent[3] - extent[2])
     vertical = aspect > 1.8
 
+    dx = (extent[1] - extent[0]) / (cell.shape[1] - 1)
+    dy = (extent[3] - extent[2]) / (cell.shape[0] - 1)
+
+    def field(d):
+        """Image of the requested variable; VORTICITY is derived from U_X, U_Y."""
+        if args.var == "VORTICITY":
+            u = gaussian_filter(np.where(valid, d["U_X"][cell], 0.0), 1.0)
+            v = gaussian_filter(np.where(valid, d["U_Y"][cell], 0.0), 1.0)
+            w = np.gradient(v, dx, axis=1) - np.gradient(u, dy, axis=0)
+            return np.where(valid, w, np.nan)
+        return np.where(valid, d[args.var][cell], np.nan)
+
     # Fixed color range over the whole series (within the displayed region)
     lo, hi = np.inf, -np.inf
     for f in files:
-        d = read_vtu(f)[3][args.var][cell[valid]]
-        lo, hi = min(lo, d.min()), max(hi, d.max())
+        img = field(read_vtu(f)[3])
+        if args.var == "VORTICITY":
+            m = np.nanpercentile(np.abs(img), 99.5)
+            lo, hi = min(lo, -m), max(hi, m)
+        else:
+            lo, hi = min(lo, np.nanmin(img)), max(hi, np.nanmax(img))
+    if args.var == "VORTICITY":
+        lo, hi = -max(-lo, hi), max(-lo, hi)
 
     plt.rcParams.update({"font.family": "DejaVu Sans", "text.color": "#e8e8e8",
                          "axes.labelcolor": "#e8e8e8", "xtick.color": "#9a9a9a", "ytick.color": "#9a9a9a"})
     frames = []
     for f in files:
         d = read_vtu(f)[3]
-        img = np.where(valid, d[args.var][cell], np.nan)
+        img = field(d)
         if vertical:
             fig, axs = plt.subplots(2, 1, figsize=(14, 2 * 13 / aspect + 1.6), facecolor="#101014")
         else:
@@ -104,13 +122,15 @@ def main():
                 s.set_visible(False)
         im = axs[0].imshow(img, origin="lower", extent=extent, cmap=args.cmap, vmin=lo, vmax=hi,
                            interpolation="nearest")
-        axs[0].contour(np.linspace(extent[0], extent[1], img.shape[1]), np.linspace(extent[2], extent[3], img.shape[0]),
-                       gaussian_filter(np.nan_to_num(img, nan=lo), 0.8), levels=contour_levels(img[valid], lo, hi),
-                       colors="k", linewidths=0.25, alpha=0.5)
-        axs[0].set_title("Density", fontsize=13)
+        if args.var != "VORTICITY":
+            axs[0].contour(np.linspace(extent[0], extent[1], img.shape[1]), np.linspace(extent[2], extent[3], img.shape[0]),
+                           gaussian_filter(np.nan_to_num(img, nan=lo), 0.8), levels=contour_levels(img[valid], lo, hi),
+                           colors="k", linewidths=0.25, alpha=0.5)
+        axs[0].set_title({"RHO": "Density", "P": "Pressure", "VORTICITY": "Vorticity"}.get(args.var, args.var), fontsize=13)
         cb = fig.colorbar(im, ax=axs[0], fraction=0.046 if not vertical else 0.015, pad=0.01)
         cb.outline.set_visible(False)
-        axs[1].imshow(schlieren(img, valid), origin="lower", extent=extent, cmap="bone", vmin=0, vmax=1,
+        rho_img = np.where(valid, d["RHO"][cell], np.nan) if "RHO" in d else img
+        axs[1].imshow(schlieren(rho_img, valid), origin="lower", extent=extent, cmap="bone", vmin=0, vmax=1,
                       interpolation="bilinear")
         axs[1].set_title("Numerical schlieren", fontsize=13)
         t = d.get("TIME", float("nan"))
