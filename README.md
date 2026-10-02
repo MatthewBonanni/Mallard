@@ -8,14 +8,14 @@ Mallard is a high-order unstructured finite volume solver for the compressible E
 
 ![Mallard simulations](./docs/images/hero.gif)
 
-*Double Mach reflection, a 2D Riemann problem and the Daru & Tenaud viscous shock tube ([`examples/`](examples)), with the shock tube's wall density at t = 1 landing on the grid-converged reference of [Zhou et al.](https://arxiv.org/abs/1705.09062).*
+*Double Mach reflection, a 2D Riemann problem, the Daru & Tenaud viscous shock tube and, in 3D, the Taylor-Green vortex at Re = 1600 ([`examples/`](examples)): the shock tube's wall density at t = 1 lands on the grid-converged reference of [Zhou et al.](https://arxiv.org/abs/1705.09062), and the vortex's kinetic-energy dissipation rate follows the 512³ spectral DNS of the [High-Order CFD Workshop](https://cfd.ku.edu/hiocfd/).*
 
 > **NOTE:** Mallard is a **work in progress**: 3D support is new, MPI is in progress, and GPU performance has only begun to be tuned.
 
 ## Features
 
 - Compressible Euler and Navier-Stokes equations (calorically perfect gas, constant or Sutherland viscosity)
-- 2D or 3D (a build option): unstructured meshes of triangles and quadrilaterals, or of tetrahedra, hexahedra, prisms and pyramids, read from Gmsh files or generated
+- 2D or 3D (a build option): unstructured meshes of triangles and quadrilaterals, or of tetrahedra, hexahedra, prisms and pyramids, read from Gmsh or HDF5 files or generated
 - Face reconstruction:
   - First order
   - Second-order MUSCL with least-squares gradients and Barth-Jespersen or Venkatakrishnan limiting
@@ -52,7 +52,7 @@ Pick the Kokkos backend at configure time, for example `-DKokkos_ENABLE_OPENMP=O
 | `Mallard_ENABLE_MPI` | `OFF` | Distributed memory with MPI: `mpirun -n N Mallard -i input.toml` splits the mesh between ranks (solution output and restart from several ranks are not supported yet) |
 | `Mallard_GPU_AWARE_MPI` | `OFF` | With MPI on GPUs: hand device buffers to a CUDA-aware MPI instead of staging halos through host memory |
 | `Mallard_ENABLE_KAMINPAR` | `OFF` | With MPI: partition the mesh with the [dKaMinPar](https://github.com/KaHIP/KaMinPar) graph partitioner (fetched at configure time; needs oneTBB) instead of a Hilbert curve |
-| `Mallard_ENABLE_HDF5` | `OFF` | Find or build HDF5 (not used by the solver yet) |
+| `Mallard_ENABLE_HDF5` | `OFF` | HDF5 mesh files (parallel HDF5 with MPI, when available) and the `mallard-mesh-convert` tool |
 | `BUILD_DOCS` | `OFF` | Doxygen documentation target |
 
 ## Running
