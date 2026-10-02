@@ -460,7 +460,8 @@ uint16_t precompute_in_chunks(TENO & scheme, const uint32_t n_reconstructed, F &
         chunk.assign(std::min(CHUNK_CELLS, n_reconstructed - c0), CellTables());
         uint32_t failed = 0, invalid = 0;
         Kokkos::parallel_reduce("teno_precompute",
-                                Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>(c0, c0 + chunk.size()),
+                                Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace, Kokkos::Schedule<Kokkos::Dynamic>>(
+                                    c0, c0 + chunk.size()),
                                 [&](const uint32_t i, uint32_t & failed_large, uint32_t & invalid_small) {
             precompute(i, chunk[i - c0], failed_large, invalid_small);
         }, failed, invalid);
