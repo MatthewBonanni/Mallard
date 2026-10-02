@@ -71,12 +71,8 @@ int Solver::init(const toml::value & input) {
         init_boundaries();
         init_numerics();
     }
-    if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) {
-        // The cache describes the local mesh at this depth, unless the depth came
-        // from a cache of another case, which may have needed more
-        const bool stale = halo_layers_cached > 0 && halo_layers == halo_layers_cached;
-        teno->save_cache(stale ? std::max(base_halo_layers(), halo_layers_needed) : halo_layers);
-    }
+    // The cache describes the local mesh at this halo depth
+    if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) teno->save_cache(halo_layers);
     init_run_parameters();
     allocate_memory();
     init_sources();
@@ -97,9 +93,9 @@ void Solver::init_mesh() {
             const toml::value reconstruction =
                 toml::find_or(input, "numerics", "face_reconstruction", toml::value(toml::table{}));
             const bool teno = toml::find_or<std::string>(reconstruction, "type", "FO") == "TENO";
-            halo_layers_cached =
+            const int cached =
                 comm::allreduce(teno ? int(TENO::cached_halo_layers(reconstruction)) : 0, comm::Op::MAX);
-            halo_layers = std::max(base_halo_layers(), halo_layers_cached);
+            halo_layers = std::max(base_halo_layers(), cached);
         }
         const std::string partitioner = toml::find_or<std::string>(
             input, "parallel", "partitioner", have_graph_partitioner() ? "graph" : "hilbert");
@@ -138,7 +134,6 @@ bool Solver::halo_too_shallow() {
         if (distribution.layer[c] <= 1) needed = std::max(needed, distribution.layer[c] + teno->gather_depth[c] + 1);
     }
     needed = comm::allreduce(needed, comm::Op::MAX);
-    halo_layers_needed = needed;
     if (needed <= halo_layers) return false;
     std::cout << "> TENO stencils need " << needed << " halo layers; rebuilding the local meshes" << std::endl;
     halo_layers = needed;

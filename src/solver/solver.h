@@ -186,8 +186,6 @@ class Solver {
     private:
         bool distribute = true;
         int halo_layers = 0;
-        int halo_layers_cached = 0;  // recorded in this rank's TENO cache
-        int halo_layers_needed = 0;  // by the TENO stencils, once known
         Distribution distribution;
         HaloExchange halo;
 

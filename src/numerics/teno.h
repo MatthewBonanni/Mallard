@@ -77,22 +77,32 @@ struct PackedStencils {
     uint8_t shift = SLICE_SHIFT;
     uint8_t width = 0;
 
-    KOKKOS_INLINE_FUNCTION
-    int32_t cell(const uint32_t c, const uint32_t s) const { return chunks(c >> CHUNK_SHIFT).cells[slot(c, s)]; }
+    /** @brief One cell's stencil, resolved once per cell. */
+    struct Row {
+        const rtype * pinv_;
+        const int32_t * cells_;
+        const int32_t * faces_;
+        uint8_t shift;
+        uint8_t width;
+
+        KOKKOS_INLINE_FUNCTION
+        int32_t cell(const uint32_t s) const { return cells_[s << shift]; }
+
+        KOKKOS_INLINE_FUNCTION
+        int32_t face(const uint32_t s) const { return faces_[s << shift]; }
+
+        KOKKOS_INLINE_FUNCTION
+        rtype pinv(const uint32_t s, const uint32_t l) const { return pinv_[(s * width + l) << shift]; }
+    };
 
     KOKKOS_INLINE_FUNCTION
-    int32_t face(const uint32_t c, const uint32_t s) const { return chunks(c >> CHUNK_SHIFT).faces[slot(c, s)]; }
-
-    KOKKOS_INLINE_FUNCTION
-    rtype pinv(const uint32_t c, const uint32_t s, const uint32_t l) const {
-        return chunks(c >> CHUNK_SHIFT).pinv[(((slice_start(c >> shift) + s) * width + l) << shift) + lane(c)];
+    Row row(const uint32_t c) const {
+        const Chunk chunk = chunks(c >> CHUNK_SHIFT);
+        const uint32_t start = slice_start(c >> shift);
+        const uint32_t lane = c & ((1u << shift) - 1);
+        return Row{chunk.pinv + ((size_t(start) * width) << shift) + lane, chunk.cells + (size_t(start) << shift) + lane,
+                   chunk.faces + (size_t(start) << shift) + lane, shift, width};
     }
-
-    KOKKOS_INLINE_FUNCTION
-    uint32_t lane(const uint32_t c) const { return c & ((1u << shift) - 1); }
-
-    KOKKOS_INLINE_FUNCTION
-    uint32_t slot(const uint32_t c, const uint32_t s) const { return ((slice_start(c >> shift) + s) << shift) + lane(c); }
 };
 
 /**

@@ -332,10 +332,15 @@ TEST(MPITest, TENOCacheOfEachRankReproducesItsSetupAndHalo) {
     for (size_t i = 0; i < fresh.U.size(); i++) n_diff += std::memcmp(&fresh.U[i], &cached.U[i], sizeof(double)) != 0;
     EXPECT_EQ(n_diff, 0u) << "on rank " << comm::rank() << " of " << comm::size();
 
-    // Another partition of the same mesh has other local meshes: recomputed
+    // Another partition of the same mesh has other local meshes: recomputed.
+    // The graph partitioner repeats itself (it was reseeded on every call only
+    // after a second graph partition in one process came out different).
     if (comm::size() > 1 && have_graph_partitioner()) {
         run("graph");
-        EXPECT_NE(std::filesystem::last_write_time(rank_file), written);
+        const auto graph_written = std::filesystem::last_write_time(rank_file);
+        EXPECT_NE(graph_written, written);
+        run("graph");
+        EXPECT_EQ(std::filesystem::last_write_time(rank_file), graph_written);
     }
     comm::barrier();
     std::filesystem::remove(rank_file);

@@ -1555,11 +1555,12 @@ struct TENOFunctor {
         conservatives(i_cell, U0);
         rtype dU[N_CONSERVATIVE][N_DIM] = {};
         const rtype inv_h = 1.0 / scale(i_cell);
+        const teno::PackedStencils::Row stencil = stencil_large.row(i_cell);
         for (uint16_t s = 0; s < stencil_large_size(i_cell); s++) {
             rtype U[N_CONSERVATIVE];
-            entry_conservatives(stencil_large.cell(i_cell, s), stencil_large.face(i_cell, s), U);
+            entry_conservatives(stencil.cell(s), stencil.face(s), U);
             FOR_I_DIM {
-                const rtype P = stencil_large.pinv(i_cell, s, i) * inv_h;
+                const rtype P = stencil.pinv(s, i) * inv_h;
                 for (uint8_t v = 0; v < N_CONSERVATIVE; v++) dU[v][i] += P * (U[v] - U0[v]);
             }
         }
@@ -1590,15 +1591,16 @@ struct TENOFunctor {
         // density jumps (Welford's update)
         rtype aK[NK][N_CONSERVATIVE] = {};
         rtype g_mean = 0.0, g_m2 = 0.0;
+        const teno::PackedStencils::Row stencil = stencil_large.row(i_cell);
         for (uint16_t s = 0; s < ns; s++) {
             rtype U[N_CONSERVATIVE];
-            entry_conservatives(stencil_large.cell(i_cell, s), stencil_large.face(i_cell, s), U);
+            entry_conservatives(stencil.cell(s), stencil.face(s), U);
             const rtype g = Kokkos::fabs(U[0] - W0[0]) / W0[0];
             const rtype delta = g - g_mean;
             g_mean += delta / (s + 1);
             g_m2 += delta * (g - g_mean);
             for (uint8_t l = 0; l < NK; l++) {
-                const rtype P = stencil_large.pinv(i_cell, s, l);
+                const rtype P = stencil.pinv(s, l);
                 FOR_I_CONSERVATIVE aK[l][i] += P * (U[i] - U0[i]);
             }
         }
@@ -1687,15 +1689,16 @@ struct TENOFunctor {
         // Every face's selection weighs all sector stencils
         rtype aS[teno::MAX_FACES][teno::NK_SMALL][N_CONSERVATIVE] = {};
         bool valid[teno::MAX_FACES] = {};
+        const teno::PackedStencils::Row stencil = stencil_small.row(i_cell);
         uint16_t start = 0;  // first slot of sector s in the cell's row
         for (uint8_t s = 0; s < n_faces; s++) {
             const uint16_t n_small = stencil_small_size(i_cell, s);
             valid[s] = n_small > 0;
             for (uint16_t e = 0; e < n_small; e++) {
                 rtype U[N_CONSERVATIVE];
-                entry_conservatives(stencil_small.cell(i_cell, start + e), stencil_small.face(i_cell, start + e), U);
+                entry_conservatives(stencil.cell(start + e), stencil.face(start + e), U);
                 for (uint8_t l = 0; l < teno::NK_SMALL; l++) {
-                    const rtype P = stencil_small.pinv(i_cell, start + e, l);
+                    const rtype P = stencil.pinv(start + e, l);
                     FOR_I_CONSERVATIVE aS[s][l][i] += P * (U[i] - U0[i]);
                 }
             }
