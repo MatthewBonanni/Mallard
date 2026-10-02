@@ -349,10 +349,14 @@ void Solver::init_output() {
             }
             monitor.faces = zone->faces;
             monitor.interval = toml::find_or<uint64_t>(entry, "interval", 1);
+            if (monitor.interval == 0) {
+                throw std::runtime_error("forces: interval must be positive.");
+            }
             const std::string file = toml::find_or<std::string>(entry, "file", "forces_" + monitor.zone + ".csv");
             const std::filesystem::path parent = std::filesystem::path(file).parent_path();
             if (!parent.empty()) std::filesystem::create_directories(parent);
-            const bool resume = step > 0;
+            // init_output runs before the restart state is read, so check the input
+            const bool resume = toml::find_or<std::string>(input, "initialize", "type", "") == "restart";
             monitor.out = std::make_shared<std::ofstream>(file, resume ? std::ios::app : std::ios::trunc);
             if (!resume) *monitor.out << "step,t,Fx_pressure,Fy_pressure,Fx_viscous,Fy_viscous\n";
             force_monitors.push_back(monitor);
