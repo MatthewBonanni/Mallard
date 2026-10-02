@@ -12,6 +12,7 @@
 #include "comm.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -78,6 +79,14 @@ int size() {
 
 void barrier() { check(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier"); }
 
+void abort(int code) {
+    int initialized = 0, finalized = 0;
+    MPI_Initialized(&initialized);
+    MPI_Finalized(&finalized);
+    if (initialized && !finalized) MPI_Abort(MPI_COMM_WORLD, code);
+    std::exit(code);
+}
+
 template <typename T>
 void allreduce(std::span<T> data, Op op) {
     check(MPI_Allreduce(MPI_IN_PLACE, data.data(), static_cast<int>(data.size()), mpi_type<T>(), mpi_op(op),
@@ -131,6 +140,8 @@ Session::~Session() {}
 int rank() { return 0; }
 int size() { return 1; }
 void barrier() {}
+
+void abort(int code) { std::exit(code); }
 
 template <typename T>
 void allreduce(std::span<T>, Op) {}

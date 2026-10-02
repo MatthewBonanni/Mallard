@@ -31,9 +31,11 @@
 #include "comm.h"
 #include "distribution.h"
 #include "halo_exchange.h"
+#include "log.h"
 
 struct ForceMonitor {
     std::string zone;
+    std::string file;
     Kokkos::View<uint32_t *> faces;
     uint64_t interval = 1;
     std::shared_ptr<std::ofstream> out;
@@ -41,6 +43,7 @@ struct ForceMonitor {
 
 struct IntegralMonitor {
     uint64_t interval = 0;
+    std::string file;
     std::shared_ptr<std::ofstream> out;
 };
 
@@ -175,9 +178,13 @@ class Solver {
         void update_source_field(rtype t_eval);
         void allocate_memory();
         void register_data();
-        bool done() const;
-        void print_logo() const;
-        void do_checks();
+        std::string stop_reason() const;  // Empty while no stop condition holds
+        double progress() const;          // Fraction of the run done, by the first stop condition to hit
+        void print_setup() const;
+        void print_progress();
+        void print_summary(const std::string & stop) const;
+        template <typename F>
+        void timed_phase(const std::string & name, F && f);
         void write_data(bool force = false);
         void write_forces();
         void write_integrals();
@@ -207,8 +214,23 @@ class Solver {
         rtype t;
         uint64_t step;
         Kokkos::Timer timer;
-        rtype t_wall_last_check;
-        rtype t_last_check;
+        uint64_t n_cells_global = 0;
+
+        // Run log
+        logging::Items mesh_summary;
+        logging::Items boundary_summary;
+        logging::Items source_summary;
+        std::string initial_state;
+        double t_wall_setup = 0.0;
+        double t_wall_stepping = 0.0;
+        double t_wall_checks = 0.0;
+        double t_wall_output = 0.0;
+        double t_wall_run_start = 0.0;
+        double t_stepping_last_check = 0.0;
+        double progress_run_start = 0.0;
+        uint64_t step_run_start = 0;
+        uint64_t step_last_check = 0;
+        uint64_t n_progress_rows = 0;
 
         // Numerics and physics
         std::shared_ptr<Mesh> mesh;
