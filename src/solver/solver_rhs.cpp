@@ -17,7 +17,9 @@
 #include "gradient.h"
 #include "viscous_flux.h"
 
-void Solver::calc_rhs(StateView solution, StateView rhs) {
+void Solver::calc_rhs(StateView solution, StateView rhs, rtype t_stage) {
+    update_boundary_states(t_stage);
+
     const Euler phys = physics;
     Kokkos::View<rtype *[N_CONSERVATIVE]> W = W_cells;
     Kokkos::parallel_for("rhs_init", mesh->n_cells, KOKKOS_LAMBDA(const uint32_t i_cell) {

@@ -20,6 +20,7 @@
 #include <Kokkos_Core.hpp>
 
 #include "common.h"
+#include "expression.h"
 
 Solver::Solver() {
     // Empty
@@ -95,12 +96,45 @@ void Solver::init_boundaries() {
             throw std::runtime_error("Boundary name " + name + " not found in mesh.");
         }
         bcs.push_back(BoundaryCondition::from_input(bound, physics));
+        // Optional filter selecting part of the zone by face centroid
+        std::unique_ptr<Expression> where;
+        if (bound.contains("where")) {
+            where = std::make_unique<Expression>(name + ".where", toml::find<std::string>(bound, "where"));
+        }
+        DirichletBoundary dirichlet;
+        if (bcs.back().type == BoundaryType::DIRICHLET) {
+            for (const char * key : {"rho", "u", "p"}) {
+                if (!bound.contains(key)) {
+                    throw std::runtime_error(std::string("Missing ") + key + " for boundary: " + name + ".");
+                }
+            }
+            std::vector<std::string> u = toml::find<std::vector<std::string>>(bound, "u");
+            if (u.size() != N_DIM) {
+                throw std::runtime_error("Invalid u for boundary: " + name + ".");
+            }
+            dirichlet.W.emplace_back(name + ".rho", toml::find<std::string>(bound, "rho"));
+            dirichlet.W.emplace_back(name + ".u[0]", u[0]);
+            dirichlet.W.emplace_back(name + ".u[1]", u[1]);
+            dirichlet.W.emplace_back(name + ".p", toml::find<std::string>(bound, "p"));
+        }
+        uint32_t n_selected = 0;
         for (uint32_t i = 0; i < zone->n_faces(); i++) {
             const uint32_t i_face = zone->h_faces(i);
+            if (where && (*where)(mesh->h_face_coords(i_face, 0), mesh->h_face_coords(i_face, 1)) == 0.0) {
+                continue;
+            }
             if (face_bc[i_face] != -1) {
                 throw std::runtime_error("Boundary " + name + " assigned more than once.");
             }
             face_bc[i_face] = i_bc;
+            dirichlet.faces.push_back(i_face);
+            n_selected++;
+        }
+        if (n_selected == 0) {
+            throw std::runtime_error("Boundary " + name + " selects no faces.");
+        }
+        if (bcs.back().type == BoundaryType::DIRICHLET) {
+            dirichlet_boundaries.push_back(std::move(dirichlet));
         }
         std::cout << "> Boundary " << name << ": " << BOUNDARY_NAMES.at(bcs.back().type) << std::endl;
     }
@@ -112,6 +146,25 @@ void Solver::init_boundaries() {
         }
     }
     boundary_data = make_boundary_data(*mesh, face_bc, bcs, physics.gamma, physics.R, physics.is_viscous(), physics);
+    h_face_state = Kokkos::create_mirror_view(boundary_data.face_state);
+    h_face_state_index = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), boundary_data.face_state_index);
+    t_boundary_states = -1.0;
+}
+
+void Solver::update_boundary_states(rtype t_eval) {
+    if (dirichlet_boundaries.empty() || t_eval == t_boundary_states) {
+        return;
+    }
+    for (const auto & bc : dirichlet_boundaries) {
+        for (uint32_t i_face : bc.faces) {
+            const rtype x = mesh->h_face_coords(i_face, 0);
+            const rtype y = mesh->h_face_coords(i_face, 1);
+            const int32_t k = h_face_state_index(i_face);
+            for (uint8_t i = 0; i < N_DIM + 2; i++) h_face_state(k, i) = bc.W[i](x, y, t_eval);
+        }
+    }
+    Kokkos::deep_copy(boundary_data.face_state, h_face_state);
+    t_boundary_states = t_eval;
 }
 
 void Solver::init_numerics() {
@@ -166,7 +219,7 @@ void Solver::init_numerics() {
     face_reconstruction->set_boundaries(boundary_data);
     face_reconstruction->init(face_reconstruction_input);
 
-    rhs_func = [this](StateView solution, StateView rhs) { calc_rhs(solution, rhs); };
+    rhs_func = [this](StateView solution, StateView rhs, rtype t_stage) { calc_rhs(solution, rhs, t_stage); };
     check_nan = toml::find_or<bool>(input, "numerics", "check_nan", false);
 }
 
@@ -369,7 +422,7 @@ void Solver::print_logo() const {
 }
 
 void Solver::take_step() {
-    time_integrator->take_step(dt, solution_vec, rhs_vec, rhs_func);
+    time_integrator->take_step(t, dt, solution_vec, rhs_vec, rhs_func);
     Kokkos::fence();
     step++;
     t += dt;
