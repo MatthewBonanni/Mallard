@@ -19,11 +19,14 @@ At least one stop condition is required.
 
 | Key | Description |
 |---|---|
-| `type` | `cartesian` (quads), `cartesian_tri` (each quad split into two triangles along its bottom-left to top-right diagonal), or `wedge` (quads over an 8 degree compression ramp starting at x = 0.5) |
+| `type` | `file`, `cartesian` (quads), `cartesian_tri` (each quad split into two triangles along its bottom-left to top-right diagonal), or `wedge` (quads over an 8 degree compression ramp starting at x = 0.5) |
+| `filename` | (`file`) ASCII Gmsh mesh, format 2.2 or 4.1, of triangles and/or quadrilaterals |
 | `Nx`, `Ny` | Number of quads in x and y |
 | `Lx`, `Ly` | Domain size; the domain is `[0, Lx] x [0, Ly]` |
 
 Generated meshes have boundary zones named `left`, `right`, `bottom` and `top`.
+For Gmsh meshes, each named physical curve becomes a boundary zone; boundary
+edges not in any physical curve form the zone `unassigned`.
 
 ## `[physics]`
 
