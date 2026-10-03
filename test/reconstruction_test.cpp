@@ -214,7 +214,7 @@ TEST_P(MeshTypes, FirstOrderCopiesCellValuesAndSkipsGhostSide) {
         for (uint8_t side = 0; side < 2; side++) {
             const int32_t c = mesh->h_cells_of_face(i_face, side);
             FOR_I_CONSERVATIVE {
-                EXPECT_EQ(h_face_W(i_face, 0, side, i), c < 0 ? -7.0 : h_W(c, i));
+                EXPECT_EQ(h_face_W(i_face, 0, side, i), c < 0 ? -7.0_r : h_W(c, i));
             }
         }
     }

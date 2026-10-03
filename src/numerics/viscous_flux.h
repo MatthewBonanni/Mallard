@@ -152,7 +152,7 @@ struct ViscousFluxFunctor {
                 }
                 if (bc.type != BoundaryType::WALL_ISOTHERMAL) {
                     heat_flux_given = true;
-                    heat_flux = (bc.type == BoundaryType::WALL_HEAT_FLUX) ? bc.data[N_DIM + 1] : 0.0;
+                    heat_flux = (bc.type == BoundaryType::WALL_HEAT_FLUX) ? bc.data[N_DIM + 1] : 0.0_r;
                 }
             } else if (bc.type == BoundaryType::SYMMETRY) {
                 symmetry = true;

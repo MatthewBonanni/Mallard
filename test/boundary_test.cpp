@@ -221,6 +221,6 @@ TEST(BoundaryTest, FarfieldLetsAPressurePulseLeave) {
     for (uint32_t i = 0; i < solver.get_mesh()->n_cells; i++) {
         dp_max = std::max(dp_max, std::abs(double(solver.h_primitives(i, 2)) - 1.0 / 1.4));
     }
-    // upt leaves 1.8e-4, extrapolation 5e-4
-    EXPECT_LT(dp_max, 1.2e-4);
+    // upt leaves 1.8e-4, extrapolation 5e-4; single precision adds ~1e-6 of round-off
+    EXPECT_LT(dp_max, precision_tol<double>(1.2e-4, 1.3e-4));
 }
