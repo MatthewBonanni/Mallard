@@ -79,8 +79,9 @@ struct ConstantVolumeReactor {
     }
 
     /**
-     * @brief f(y) and, if J is not null, the row-major Jacobian df/dy, from
-     *        d omega / dC and d q / dT by the chain rule (C_k = rho Y_k / W_k).
+     * @brief f(y) and, if J is not null, the Jacobian df/dy (in the lanes'
+     *        layout, see dense_index), from d omega / dC and d q / dT by the
+     *        chain rule (C_k = rho Y_k / W_k).
      */
     template <typename Lanes>
     KOKKOS_INLINE_FUNCTION void evaluate(const Lanes & lanes, const double * y, double * f, double * J) const {
@@ -128,11 +129,13 @@ struct ConstantVolumeReactor {
                      : 0.0;
 
         // T row: d(sum u_k omega_k)/dY_j = rho / W_j sum_k u_k dw_kj; d cv / dY_j = cv_j
+        constexpr bool CM = Lanes::column_major;
+        auto Jat = [&](const uint32_t r, const uint32_t c) -> double & { return J[dense_index<CM>(n, r, c)]; };
         lanes.for_each(ns, [&](const uint32_t j) {
             double sum = sum_a;
-            for (uint32_t k = 0; k < ns; k++) sum += GAS_CONSTANT * T * (h_RT[k] - 1.0) * J[k * n + j];
+            for (uint32_t k = 0; k < ns; k++) sum += GAS_CONSTANT * T * (h_RT[k] - 1.0) * Jat(k, j);
             const double cv_j = GAS_CONSTANT * (cp_R[j] - 1.0) * thermo.inv_W(j);
-            J[ns * n + j] = -sum * rho * thermo.inv_W(j) * inv_rho_cv - dT_dt * cv_j / cv;
+            Jat(ns, j) = -sum * rho * thermo.inv_W(j) * inv_rho_cv - dT_dt * cv_j / cv;
         });
         lanes.sync();
         const double d_sum_dT = lanes.sum(ns, [&](const uint32_t k) {
@@ -140,19 +143,31 @@ struct ConstantVolumeReactor {
         });
         const double dcv_dT =
             GAS_CONSTANT * lanes.sum(ns, [&](const uint32_t k) { return y[k] * thermo.inv_W(k) * thermo.dcp_R_dT(k, p); });
-        lanes.single([&]() { J[ns * n + ns] = -d_sum_dT * inv_rho_cv - dT_dt * dcv_dT / cv; });
+        lanes.single([&]() { Jat(ns, ns) = -d_sum_dT * inv_rho_cv - dT_dt * dcv_dT / cv; });
 
         // Species rows: df_k/dY_j = W_k / W_j dw_kj, df_k/dT = W_k / rho domega_k/dT
         lanes.for_each(ns, [&](const uint32_t k) {
             const double W_k = 1.0 / thermo.inv_W(k);
-            for (uint32_t j = 0; j < ns; j++) J[k * n + j] *= W_k * thermo.inv_W(j);
-            J[k * n + ns] = W_k * domega_dT[k] / rho;
+            for (uint32_t j = 0; j < ns; j++) Jat(k, j) *= W_k * thermo.inv_W(j);
+            Jat(k, ns) = W_k * domega_dT[k] / rho;
             if (rank_one) rank_one[k] *= W_k;  // u_k = W_k a_k, with v_j = 1 / W_j
         });
         if (rank_one) lanes.single([&]() { rank_one[ns] = 0.0; });
         lanes.sync();
     }
 };
+
+/**
+ * @brief Doubles of the part of advance_reactor()'s work memory that can be
+ *        in fast (team scratch) memory: all but the Jacobian.
+ */
+template <typename MemorySpace>
+KOKKOS_INLINE_FUNCTION uint32_t reactor_fast_size(const KineticsTable<MemorySpace> & kinetics,
+                                                  const SparseLUPattern<MemorySpace> * sparse = nullptr) {
+    const uint32_t n = kinetics.n_species + 1;
+    const uint32_t solver = sparse ? sparse->work_size() + 1 : n * n;
+    return n + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics) + solver + rosenbrock_vectors_size(n);
+}
 
 /**
  * @brief Doubles of work memory advance_reactor() needs, the linear solver's
@@ -162,8 +177,7 @@ template <typename MemorySpace>
 KOKKOS_INLINE_FUNCTION uint32_t reactor_work_size(const KineticsTable<MemorySpace> & kinetics,
                                                   const SparseLUPattern<MemorySpace> * sparse = nullptr) {
     const uint32_t n = kinetics.n_species + 1;
-    const uint32_t solver = sparse ? sparse->work_size() + 1 : n * n;
-    return n + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics) + solver + rosenbrock_work_size(n);
+    return n * n + reactor_fast_size(kinetics, sparse);
 }
 
 /**
@@ -173,22 +187,27 @@ KOKKOS_INLINE_FUNCTION uint32_t reactor_work_size(const KineticsTable<MemorySpac
  *        initial mass fractions are clipped the same way before integrating.
  * @param Y Mass fractions (n_species), T temperature: updated in place.
  * @param h Sub-step size: first guess in, proposal for the next call out.
- * @param work reactor_work_size(kinetics, sparse) doubles.
+ * @param work reactor_work_size(kinetics, sparse) doubles, or with fast the
+ *        n * n doubles of the Jacobian only.
  * @param pivot n_species + 1 integers (dense LU).
- * @param sparse Null for the dense LU, else the pattern of the sparse one.
+ * @param sparse The pattern of the sparse LU (Sparse = true; else unused).
+ * @param fast Null, or reactor_fast_size(kinetics, sparse) doubles of faster
+ *        memory for the rest of the work memory.
  */
-template <typename Lanes, typename MemorySpace, typename Observer = NoObserver>
+template <bool Sparse = false, typename Lanes, typename MemorySpace, typename Observer = NoObserver>
 KOKKOS_INLINE_FUNCTION RosenbrockResult advance_reactor(const Lanes & lanes, const ThermoTable<MemorySpace> & thermo,
                                                         const KineticsTable<MemorySpace> & kinetics, const double rho,
                                                         const double dt, double * Y, double & T, double & h,
                                                         const ReactorOptions & options, double * work,
                                                         uint32_t * pivot, Observer && observer = Observer(),
-                                                        const SparseLUPattern<MemorySpace> * sparse = nullptr) {
+                                                        const SparseLUPattern<MemorySpace> * sparse = nullptr,
+                                                        double * fast = nullptr) {
     const uint32_t ns = thermo.n_species, n = ns + 1;
-    double * y = work;
+    double * J = work;
+    double * y = fast ? fast : work + n * n;
     double * scratch = y + n;
     double * solver_work = scratch + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics);
-    double * integrator_work = solver_work + (sparse ? sparse->work_size() + 1 : n * n);
+    double * vectors = solver_work + (Sparse ? sparse->work_size() + 1 : n * n);
     // Scalar code runs on every lane with the same values; writes go through for_each or single
     double e, cv;
     thermo.e_cv(T, MassFractions{Y}, e, cv);
@@ -207,7 +226,7 @@ KOKKOS_INLINE_FUNCTION RosenbrockResult advance_reactor(const Lanes & lanes, con
     lanes.single([&]() { y[ns] = T0; });
     lanes.sync();
     RosenbrockResult result;
-    if (sparse) {
+    if constexpr (Sparse) {
         // LU values, z = A_s^-1 u, u, x, beta
         double * values = solver_work;
         double * z = values + sparse->nnz;
@@ -215,12 +234,12 @@ KOKKOS_INLINE_FUNCTION RosenbrockResult advance_reactor(const Lanes & lanes, con
         double * x = u + n;
         const ConstantVolumeReactor<MemorySpace> reactor{thermo, kinetics, rho, options.atol_Y, scratch, u};
         const SparseLU<MemorySpace> solver{*sparse, values, z, u, x, x + n};
-        result = integrate(lanes, reactor, solver, 0.0, dt, y, h, options.integrator, integrator_work,
+        result = integrate(lanes, reactor, solver, 0.0, dt, y, h, options.integrator, J, vectors,
                            static_cast<Observer &&>(observer));
     } else {
         const ConstantVolumeReactor<MemorySpace> reactor{thermo, kinetics, rho, options.atol_Y, scratch, nullptr};
         const DenseLU solver{n, solver_work, pivot};
-        result = integrate(lanes, reactor, solver, 0.0, dt, y, h, options.integrator, integrator_work,
+        result = integrate(lanes, reactor, solver, 0.0, dt, y, h, options.integrator, J, vectors,
                            static_cast<Observer &&>(observer));
     }
     lanes.for_each(ns, [&](const uint32_t k) { y[k] = Kokkos::fmax(y[k], 0.0); });
@@ -240,8 +259,12 @@ KOKKOS_INLINE_FUNCTION RosenbrockResult advance_reactor(const ThermoTable<Memory
                                                         const ReactorOptions & options, double * work,
                                                         uint32_t * pivot, Observer && observer = Observer(),
                                                         const SparseLUPattern<MemorySpace> * sparse = nullptr) {
-    return advance_reactor(SerialLanes(), thermo, kinetics, rho, dt, Y, T, h, options, work, pivot,
-                           static_cast<Observer &&>(observer), sparse);
+    if (sparse) {
+        return advance_reactor<true>(SerialLanes(), thermo, kinetics, rho, dt, Y, T, h, options, work, pivot,
+                                     static_cast<Observer &&>(observer), sparse);
+    }
+    return advance_reactor<false>(SerialLanes(), thermo, kinetics, rho, dt, Y, T, h, options, work, pivot,
+                                  static_cast<Observer &&>(observer), sparse);
 }
 
 /**

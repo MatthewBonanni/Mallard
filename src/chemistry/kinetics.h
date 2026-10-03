@@ -405,7 +405,8 @@ struct KineticsTable {
     /**
      * @brief Jacobian of the production rates with respect to the
      *        concentrations at fixed T, one row per lane:
-     *        J[k * stride + j] = d omega_k / d C_j for j < n_species.
+     *        J[dense_index(stride, k, j)] = d omega_k / d C_j for j < n_species
+     *        (by rows, or by columns for lanes with Lanes::column_major).
      * @param d Derivatives from rates_of_progress at the same state.
      * @param all_columns If not null, the part of row k that is the same in
      *        every column (third bodies at their default efficiency, PLOG
@@ -415,28 +416,29 @@ struct KineticsTable {
     KOKKOS_INLINE_FUNCTION void production_jacobian(const Lanes & lanes, const ReactionDerivatives & d, double * J,
                                                     const uint32_t stride, double * all_columns = nullptr) const {
         const uint32_t n = n_species;
+        constexpr bool CM = Lanes::column_major;
         lanes.for_each(n, [&](const uint32_t k) {
-            double * row = J + k * stride;
-            for (uint32_t j = 0; j < n; j++) row[j] = 0.0;
+            auto row = [&](const uint32_t j) -> double & { return J[dense_index<CM>(stride, k, j)]; };
+            for (uint32_t j = 0; j < n; j++) row(j) = 0.0;
             double uniform = 0.0;
             for (uint32_t e = species_offset(k); e < species_offset(k + 1); e++) {
                 const uint32_t i = species_reaction(e);
                 const double nu = species_nu(e);
                 for (uint32_t a = forward_offset(i); a < forward_offset(i + 1); a++) {
-                    row[forward_species(a)] += nu * d.d_forward[a];
+                    row(forward_species(a)) += nu * d.d_forward[a];
                 }
                 for (uint32_t a = reverse_offset(i); a < reverse_offset(i + 1); a++) {
-                    row[reverse_species(a)] -= nu * d.d_reverse[a];
+                    row(reverse_species(a)) -= nu * d.d_reverse[a];
                 }
                 const double all = nu * (d.dq_dM[i] * default_efficiency(i) + d.dq_uniform[i]);
                 if (all_columns) {
                     uniform += all;
                 } else if (all != 0.0) {
-                    for (uint32_t j = 0; j < n; j++) row[j] += all;
+                    for (uint32_t j = 0; j < n; j++) row(j) += all;
                 }
                 if (d.dq_dM[i] != 0.0) {
                     for (uint32_t x = efficiency_offset(i); x < efficiency_offset(i + 1); x++) {
-                        row[efficiency_species(x)] += nu * d.dq_dM[i] * efficiency_extra(x);
+                        row(efficiency_species(x)) += nu * d.dq_dM[i] * efficiency_extra(x);
                     }
                 }
             }

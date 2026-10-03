@@ -225,7 +225,7 @@ struct LanesIgnitionFunctor {
 
     KOKKOS_INLINE_FUNCTION void operator()(TeamTag, const Member & member) const {
         const uint32_t c = static_cast<uint32_t>(member.league_rank()), ns = thermo.n_species;
-        const VectorLanes<Member> team(member, lanes);
+        const TeamLanes<Member> team(member, lanes);
         double * Y = &work(c, 0);
         team.for_each(ns, [&](const uint32_t k) { Y[k] = state(c, 3 + k); });
         team.sync();
@@ -260,7 +260,7 @@ Rows<double>::host_mirror_type lanes_ignition(const Mechanism & mech, const Tabl
         Kokkos::parallel_for("ignition_threads", n_cases, functor);
     } else {
         const auto policy = Kokkos::TeamPolicy<LanesIgnitionFunctor::TeamTag>(n_cases, 1, lanes).set_scratch_size(
-            0, Kokkos::PerTeam(VectorLanes<LanesIgnitionFunctor::Member>::scratch_bytes(lanes)));
+            0, Kokkos::PerTeam(TeamLanes<LanesIgnitionFunctor::Member>::scratch_bytes(lanes)));
         Kokkos::parallel_for("ignition_teams", policy, functor);
     }
     return Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), out);
@@ -309,11 +309,11 @@ TEST(ChemistryReactorTest, RodasIsFourthOrderWithThirdOrderEmbeddedSolution) {
 
 TEST(ChemistryReactorTest, RodasSolvesTheStiffRobertsonProblem) {
     const Robertson system;
-    double y[3] = {1.0, 0.0, 0.0}, work[rosenbrock_work_size(3)], LU[9], h = 0.0;
+    double y[3] = {1.0, 0.0, 0.0}, J[9], vectors[rosenbrock_vectors_size(3)], LU[9], h = 0.0;
     uint32_t pivot[3];
     RosenbrockOptions options;
     options.rtol = 1e-8;
-    const RosenbrockResult r = integrate(SerialLanes(), system, DenseLU{3, LU, pivot}, 0.0, 40.0, y, h, options, work);
+    const RosenbrockResult r = integrate(SerialLanes(), system, DenseLU{3, LU, pivot}, 0.0, 40.0, y, h, options, J, vectors);
     ASSERT_EQ(r.status, RosenbrockStatus::SUCCESS);
     // Hairer & Wanner, Solving ODEs II, reference solution at t = 40
     const double reference[3] = {0.7158270687193e+00, 0.9185534764529e-05, 0.2841637457462e+00};
@@ -461,5 +461,49 @@ TEST(ChemistryReactorTest, SparseLUSolvesLikeTheDenseOne) {
         }
         std::cout << name << ": " << pattern.nnz << " entries in L + U of " << n * n << ", "
                   << pattern.update.extent(0) << " updates\n";
+    }
+}
+
+TEST(ChemistryReactorTest, LargeMechanismIgnitesLikeCanteraWithDenseAndSparseLU) {
+    // V3 at 100 species (n-dodecane/air, Wang et al., 20 atm, phi 0.5-2,
+    // 1000-1400 K): ignition delays and temperatures as V1, with the dense LU
+    // and with the static-pattern sparse one
+    const Mechanism mech = read_mechanism(SOURCE_DIR + "/mechanisms/nDodecane_Reitz.yaml", "nDodecane_IG");
+    const auto thermo = make_thermo_table<Kokkos::HostSpace>(mech);
+    const auto kinetics = make_kinetics_table<Kokkos::HostSpace>(mech);
+    const auto pattern = make_sparse_lu_pattern<Kokkos::HostSpace>(mech);
+    const uint32_t ns = mech.n_species();
+    const Table ref = read_table("ndodecane_ignition.csv");
+    ASSERT_EQ(ref.rows.size(), 9u);
+    std::vector<double> work(reactor_work_size(kinetics, &pattern) + reactor_work_size(kinetics)), Y(ns);
+    std::vector<uint32_t> pivot(ns + 1);
+    for (const bool sparse : {false, true}) {
+        double worst = 0.0;
+        for (const auto & row : ref.rows) {
+            for (uint32_t k = 0; k < ns; k++) Y[k] = row[ref.column("Y0_" + mech.species[k].name)];
+            const double rho = row[ref.column("rho")], tau = row[ref.column("tau")];
+            double T = row[ref.column("T0")], h = 0.0, t = 0.0;
+            IgnitionObserver observer;
+            observer.index = ns;
+            double T_at[2];
+            // (Irreversible soot-precursor reactions keep this mechanism from its UV equilibrium)
+            const double ends[2] = {0.5 * tau, 2.0 * tau};
+            for (int s = 0; s < 2; s++) {
+                observer.t_offset = t;
+                const RosenbrockResult r = advance_reactor(thermo, kinetics, rho, ends[s] - t, Y.data(), T, h,
+                                                           ReactorOptions(), work.data(), pivot.data(), observer,
+                                                           sparse ? &pattern : nullptr);
+                ASSERT_EQ(r.status, RosenbrockStatus::SUCCESS);
+                t = ends[s];
+                T_at[s] = T;
+            }
+            const std::string where = (sparse ? "sparse" : "dense") + std::string(" T0 ") +
+                                      std::to_string(row[0]) + " phi " + std::to_string(row[2]);
+            worst = std::max(worst, std::abs(observer.t_ignition / tau - 1.0));
+            EXPECT_NEAR(observer.t_ignition, tau, 5e-3 * tau) << where;
+            EXPECT_NEAR(T_at[0], row[ref.column("T_half_tau")], 1e-2 * row[ref.column("T_half_tau")]) << where;
+            EXPECT_NEAR(T_at[1], row[ref.column("T_2tau")], 1e-2 * row[ref.column("T_2tau")]) << where;
+        }
+        std::cout << (sparse ? "sparse" : "dense") << " LU: max ignition delay error " << worst << "\n";
     }
 }

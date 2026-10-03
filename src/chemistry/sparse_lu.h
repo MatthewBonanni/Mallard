@@ -266,9 +266,10 @@ struct SparseLU {
     template <typename Lanes>
     KOKKOS_INLINE_FUNCTION bool factor(const Lanes & lanes, const double * J, const double diagonal) const {
         const uint32_t n = p.n;
+        constexpr bool CM = Lanes::column_major;
         lanes.for_each(p.nnz, [&](const uint32_t e) {
-            const uint32_t src = p.source(e);
-            values[e] = -J[src] + (src / n == src % n ? diagonal : 0.0);
+            const uint32_t r = p.source(e) / n, c = p.source(e) % n;
+            values[e] = -J[dense_index<CM>(n, r, c)] + (r == c ? diagonal : 0.0);
         });
         lanes.sync();
         for (uint32_t k = 0; k < n; k++) {

@@ -220,6 +220,10 @@ void benchmark(const toml::value & input) {
     if (lanes < 0) throw InputError("benchmark.lanes must not be negative.");
     cell_options.lanes = static_cast<uint32_t>(lanes);
     cell_options.bin_by_cost = toml::find_or<bool>(bench, "bin_by_cost", true);
+    const int64_t threads = toml::find_or<int64_t>(bench, "threads", 0);
+    if (threads < 0) throw InputError("benchmark.threads must not be negative.");
+    cell_options.threads = static_cast<uint32_t>(threads);
+    cell_options.shared = static_cast<int>(toml::find_or<int64_t>(bench, "shared", -1));
     CellChemistry cells;
     cells.init(model.device(), mech, chemistry::make_kinetics_table(mech), cell_options, n_cells);
 
@@ -228,15 +232,19 @@ void benchmark(const toml::value & input) {
         {"Benchmark", std::to_string(n_cells) + " cells from " + std::to_string(n_samples) + " trajectory states (" +
                           std::to_string(n_igniting) + " igniting cells)"},
         {"Execution", (cells.lanes() == 1 ? "one thread per cell" + std::string(cell_options.bin_by_cost ? ", binned by cost" : "")
-                                           : std::to_string(cells.lanes()) + " vector lanes per cell") +
+                                           : std::to_string(cells.threads()) + " x " + std::to_string(cells.lanes()) +
+                                                 " lanes per cell" +
+                                                 (cells.shared_bytes() > 0 ? ", " + std::to_string(cells.shared_bytes() / 1024) +
+                                                                                 " KiB in team scratch"
+                                                                           : std::string(", global memory"))) +
                           (cells.sparse_entries() > 0 ? ", sparse LU (" + std::to_string(cells.sparse_entries()) + " entries)"
                                                       : ", dense LU")},
         {"Tolerances", "rtol = " + brief(options.integrator.rtol) + ", atol = " + brief(options.atol_Y)},
     });
     std::ofstream out(output);
     if (!out) throw InputError("cannot write benchmark.output = \"" + output + "\".");
-    out << "mechanism,species,reactions,lanes,cells,igniting,dt,active,seconds,cells_per_second,mean_substeps,"
-           "max_substeps\n";
+    out << "mechanism,species,reactions,threads,lanes,shared,cells,igniting,dt,active,seconds,cells_per_second,"
+           "mean_substeps,max_substeps\n";
     for (const double dt : dts) {
         double best = 1e300, mean_steps = 0.0, max_steps = 0.0;
         uint64_t active = 0;
@@ -268,7 +276,8 @@ void benchmark(const toml::value & input) {
         logging::items({{"dt = " + brief(dt) + " s", brief(n_cells / best) + " cells/s (" + brief(best * 1e3) +
                                                          " ms), " + std::to_string(active) + " active, sub-steps mean " +
                                                          brief(mean_steps) + ", max " + brief(max_steps)}});
-        out << mech.file << "," << ns << "," << mech.reactions.size() << "," << cells.lanes() << "," << n_cells << ","
+        out << mech.file << "," << ns << "," << mech.reactions.size() << "," << cells.threads() << ","
+            << cells.lanes() << "," << cells.shared_bytes() << "," << n_cells << ","
             << n_igniting << "," << dt << "," << active << "," << best << "," << n_cells / best << "," << mean_steps
             << "," << max_steps << "\n";
     }

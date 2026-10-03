@@ -21,12 +21,6 @@
 
 namespace chemistry {
 
-/** @brief Index of entry (r, c) of an n x n matrix stored by rows, or by columns. */
-template <bool ColumnMajor>
-KOKKOS_INLINE_FUNCTION constexpr uint32_t dense_index(const uint32_t n, const uint32_t r, const uint32_t c) {
-    return ColumnMajor ? c * n + r : r * n + c;
-}
-
 /**
  * @brief Dense LU factorization with partial pivoting of the n x n matrix A
  *        (by rows, or by columns for lanes with Lanes::column_major), in
@@ -152,9 +146,9 @@ struct Rodas {
 };
 
 /**
- * @brief Dense linear solver of integrate(): A = diagonal I - J (J by rows)
- *        factored by lu_factor in n * n doubles (LU, in the lanes' layout)
- *        and n integers (pivot).
+ * @brief Dense linear solver of integrate(): A = diagonal I - J factored by
+ *        lu_factor in n * n doubles (LU, like J in the lanes' layout) and n
+ *        integers (pivot).
  */
 struct DenseLU {
     uint32_t n;
@@ -164,10 +158,9 @@ struct DenseLU {
     template <typename Lanes>
     KOKKOS_INLINE_FUNCTION bool factor(const Lanes & lanes, const double * J, const double diagonal) const {
         constexpr bool CM = Lanes::column_major;
-        lanes.for_each(n, [&](const uint32_t i) {
-            for (uint32_t j = 0; j < n; j++) LU[dense_index<CM>(n, i, j)] = -J[i * n + j];
-            LU[i * n + i] += diagonal;
-        });
+        lanes.for_each(n * n, [&](const uint32_t a) { LU[a] = -J[a]; });
+        lanes.sync();
+        lanes.for_each(n, [&](const uint32_t i) { LU[dense_index<CM>(n, i, i)] += diagonal; });
         lanes.sync();
         return lu_factor(lanes, n, LU, pivot);
     }
@@ -178,9 +171,9 @@ struct DenseLU {
     }
 };
 
-/** @brief Doubles of work memory integrate() needs for a system of size n (the dense J and nine vectors). */
+/** @brief Doubles of the vectors integrate() needs for a system of size n (besides the dense J). */
 KOKKOS_INLINE_FUNCTION
-constexpr uint32_t rosenbrock_work_size(const uint32_t n) { return n * n + 9 * n; }
+constexpr uint32_t rosenbrock_vectors_size(const uint32_t n) { return 9 * n; }
 
 /**
  * @brief One RODAS step of size h from y0 with f0 = f(y0), given the
@@ -253,24 +246,25 @@ KOKKOS_INLINE_FUNCTION void rodas_step(const Lanes & lanes, const System & syste
  *        sqrt(mean((err_i / (atol_i + rtol max(|y0_i|, |y1_i|)))^2)) <= 1.
  *
  * The System provides size(), rhs(lanes, y, f), rhs_jacobian(lanes, y, f, J)
- * (row-major dense J), atol(i) and admissible(lanes, y); steps to
+ * (dense J in the lanes' layout, see dense_index), atol(i) and
+ * admissible(lanes, y); steps to
  * inadmissible states (e.g. negative mass fractions) are rejected. The Solver
  * factors diagonal I - J (factor) and solves with it (solve), e.g. DenseLU.
  *
  * @param y State, advanced in place.
  * @param h First sub-step size if positive; on return the proposed next one.
- * @param work rosenbrock_work_size(n) doubles.
+ * @param J n * n doubles for the Jacobian (kept over rejected sub-steps).
+ * @param vectors rosenbrock_vectors_size(n) doubles.
  * @param observer Called as observer(t, y, f) at every accepted state from
  *        which a step starts (t_start included, t_end excluded).
  */
 template <typename Lanes, typename System, typename Solver, typename Observer = NoObserver>
 KOKKOS_INLINE_FUNCTION RosenbrockResult integrate(const Lanes & lanes, const System & system, const Solver & solver,
                                                   const double t_start, const double t_end, double * y, double & h,
-                                                  const RosenbrockOptions & options, double * work,
-                                                  Observer && observer = Observer()) {
+                                                  const RosenbrockOptions & options, double * J,
+                                                  double * vectors, Observer && observer = Observer()) {
     const uint32_t n = system.size();
-    double * J = work;
-    double * f0 = J + n * n;
+    double * f0 = vectors;
     double * y_new = f0 + n;
     double * f_tmp = y_new + n;
     double * k[6];

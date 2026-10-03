@@ -26,14 +26,19 @@
 
 /**
  * @brief Options of CellChemistry: the reactor's tolerances, the temperature
- *        below which cells are frozen, the vector lanes per cell (0:
- *        automatic, 1: one thread per cell) and whether cells integrated by
- *        one thread are ordered by their last cost (binning).
+ *        below which cells are frozen, the vector lanes and threads of the
+ *        team of each cell (0: automatic; lanes = 1: one thread per cell),
+ *        whether a team keeps its work memory in scratch (shared) memory
+ *        where it fits (-1 automatic, 0 never, 1 where it fits), and whether
+ *        cells integrated by one thread are ordered by their last cost
+ *        (binning).
  */
 struct CellChemistryOptions {
     chemistry::ReactorOptions reactor;
     double T_frozen = 0.0;
     uint32_t lanes = 0;
+    uint32_t threads = 0;
+    int shared = -1;
     bool bin_by_cost = true;
 };
 
@@ -79,8 +84,14 @@ class CellChemistry {
                           const Kokkos::View<rtype *> & hrr, const Kokkos::View<rtype **, Kokkos::LayoutRight> & production,
                           uint32_t n);
 
-        /** @brief Vector lanes per cell (1: one thread per cell). */
+        /** @brief Vector lanes per cell thread (1: one thread per cell). */
         uint32_t lanes() const { return n_lanes; }
+
+        /** @brief Threads of a cell's team. */
+        uint32_t threads() const { return n_threads; }
+
+        /** @brief Bytes of team scratch memory per cell holding its work memory, 0 if global memory. */
+        size_t shared_bytes() const { return fast_bytes; }
 
         /** @brief Entries of L + U of the sparse LU, 0 for the dense one. */
         uint32_t sparse_entries() const { return sparse ? pattern.nnz : 0; }
@@ -90,6 +101,8 @@ class CellChemistry {
         chemistry::KineticsTable<> kinetics;
         CellChemistryOptions options;
         uint32_t n_lanes = 1;
+        uint32_t n_threads = 1;
+        size_t fast_bytes = 0;
         bool sparse = false;
         chemistry::SparseLUPattern<> pattern;
         Kokkos::View<double **, Kokkos::LayoutRight> work;  // (cell of a chunk, work)

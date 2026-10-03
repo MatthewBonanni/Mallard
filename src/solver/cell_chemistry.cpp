@@ -17,13 +17,21 @@
 
 #include <Kokkos_Sort.hpp>
 
+#ifndef MALLARD_CHEMISTRY_MIN_BLOCKS
+#define MALLARD_CHEMISTRY_MIN_BLOCKS 16
+#endif
+
 namespace {
 
 constexpr double WORK_MEMORY_BYTES = 1024.0 * 1024.0 * 1024.0;
 
+template <bool Sparse>
 struct TeamTag {};
-using TeamPolicy = Kokkos::TeamPolicy<TeamTag>;
-using Member = TeamPolicy::member_type;
+// Fewer registers per thread, more cells per SM: the team kernels are latency bound
+constexpr unsigned TEAM_MIN_BLOCKS = MALLARD_CHEMISTRY_MIN_BLOCKS;
+template <bool Sparse>
+using TeamPolicy = Kokkos::TeamPolicy<TeamTag<Sparse>, Kokkos::LaunchBounds<32, TEAM_MIN_BLOCKS>>;
+using Member = TeamPolicy<false>::member_type;
 
 /**
  * @brief Mass fractions (double) and temperature of a cell; returns its
@@ -104,6 +112,7 @@ struct QueueFunctor {
  *        get no chemistry, and their seeds must follow the owner's.
  */
 struct AdvanceFunctor {
+    using value_type = uint32_t;  // failures
     Mixture gas;
     chemistry::KineticsTable<> kinetics;
     StateView U;
@@ -120,6 +129,7 @@ struct AdvanceFunctor {
     uint32_t lanes;
     chemistry::SparseLUPattern<> pattern;
     bool sparse;
+    uint32_t fast_size;  // doubles of team scratch for the work memory, 0: global memory
 
     /** @brief One thread per cell. */
     KOKKOS_INLINE_FUNCTION
@@ -140,11 +150,13 @@ struct AdvanceFunctor {
         if (r.status != chemistry::RosenbrockStatus::SUCCESS) failures++;
     }
 
-    /** @brief The vector lanes of a one-thread team per cell. */
-    KOKKOS_INLINE_FUNCTION
-    void operator()(TeamTag, const Member & member, uint32_t & failures) const {
+    /** @brief All threads and lanes of a team per cell. */
+    template <bool Sparse>
+    KOKKOS_INLINE_FUNCTION void operator()(TeamTag<Sparse>, const Member & member, uint32_t & failures) const {
         const uint32_t slot = static_cast<uint32_t>(member.league_rank()), c = queue(slot), ns = gas.n_species;
-        const chemistry::VectorLanes<Member> team(member, lanes);
+        const chemistry::TeamLanes<Member> team(member, lanes * static_cast<uint32_t>(member.team_size()));
+        double * fast =
+            fast_size > 0 ? static_cast<double *>(member.team_scratch(0).get_shmem(fast_size * sizeof(double))) : nullptr;
         double * Y = &work(slot, 0);
         const double rho = static_cast<double>(U(c, 0));
         team.for_each(ns, [&](const uint32_t k) { Y[k] = static_cast<double>(rhoY(c, k)) / rho; });
@@ -155,8 +167,8 @@ struct AdvanceFunctor {
         double T = gas.thermo.T_from_e(e, chemistry::MassFractions{Y}, static_cast<double>(T_seed(c)));
         double h = static_cast<double>(chem_h(c));
         const chemistry::RosenbrockResult r =
-            chemistry::advance_reactor(team, gas.thermo, kinetics, rho, dt, Y, T, h, options, Y + ns, &pivot(slot, 0),
-                                       chemistry::NoObserver(), sparse ? &pattern : nullptr);
+            chemistry::advance_reactor<Sparse>(team, gas.thermo, kinetics, rho, dt, Y, T, h, options, Y + ns,
+                                               &pivot(slot, 0), chemistry::NoObserver(), &pattern, fast);
         team.for_each(ns, [&](const uint32_t k) { rhoY(c, k) = static_cast<rtype>(rho * Y[k]); });
         team.single([&]() {
             chem_h(c) = static_cast<rtype>(h);
@@ -222,7 +234,7 @@ void CellChemistry::init(const Mixture & gas_in, const chemistry::Mechanism & me
     kinetics = kinetics_in;
     options = options_in;
     const uint32_t ns = gas.n_species;
-    const uint32_t lanes_max = static_cast<uint32_t>(Kokkos::TeamPolicy<>::vector_length_max());
+    const uint32_t lanes_max = static_cast<uint32_t>(TeamPolicy<false>::vector_length_max());
     if (options.lanes == 0) {
         // A warp per cell where the device has lanes and the mechanism fills them
         n_lanes = (lanes_max >= 32 && ns >= 16) ? 32 : 1;
@@ -232,8 +244,17 @@ void CellChemistry::init(const Mixture & gas_in, const chemistry::Mechanism & me
         }
         n_lanes = std::min(options.lanes, lanes_max);
     }
+    n_threads = n_lanes == 1 ? 1 : (options.threads > 0 ? options.threads : 1);
+    if (n_lanes * n_threads > 32) throw std::invalid_argument("chemistry: at most 32 threads and lanes per cell.");
     sparse = options.reactor.use_sparse(ns);
     if (sparse) pattern = chemistry::make_sparse_lu_pattern(mechanism);
+    // Teams keep all but the Jacobian in scratch memory where it fits
+    fast_bytes = 0;
+    if (n_lanes > 1 && options.shared != 0) {
+        const size_t bytes = sizeof(double) * chemistry::reactor_fast_size(kinetics, sparse ? &pattern : nullptr);
+        const size_t room = static_cast<size_t>(TeamPolicy<false>::scratch_size_max(0));
+        if (bytes + chemistry::TeamLanes<Member>::scratch_bytes(n_lanes * n_threads) + 64 <= room) fast_bytes = bytes;
+    }
     // Mass fractions, then the reactor's work memory (also enough for the activity and heat release kernels)
     const uint32_t work_size = ns + chemistry::reactor_work_size(kinetics, sparse ? &pattern : nullptr);
     const double per_cell = 8.0 * work_size + 4.0 * (ns + 3) + 8.0;
@@ -272,14 +293,24 @@ CellChemistry::Statistics CellChemistry::advance(const StateView & U, const Spec
                                               Kokkos::subview(queue, queued));
         }
         const AdvanceFunctor functor{gas,  kinetics, U,     rhoY,  T_seed,          chem_h, chem_cost, previous_cost,
-                                     work, pivot,    queue, options.reactor, dt, n_lanes, pattern, sparse};
+                                     work, pivot,    queue, options.reactor, dt, n_lanes, pattern, sparse,
+                                     static_cast<uint32_t>(fast_bytes / sizeof(double))};
         uint32_t failures = 0;
         if (n_lanes == 1) {
             Kokkos::parallel_reduce("chemistry_advance", n_active, functor, Kokkos::Sum<uint32_t>(failures));
         } else {
-            const auto policy = TeamPolicy(static_cast<int>(n_active), 1, static_cast<int>(n_lanes))
-                                    .set_scratch_size(0, Kokkos::PerTeam(chemistry::VectorLanes<Member>::scratch_bytes(n_lanes)));
-            Kokkos::parallel_reduce("chemistry_advance_teams", policy, functor, Kokkos::Sum<uint32_t>(failures));
+            const size_t scratch = chemistry::TeamLanes<Member>::scratch_bytes(n_lanes * n_threads) + fast_bytes + 64;
+            if (sparse) {
+                const auto policy = TeamPolicy<true>(static_cast<int>(n_active), static_cast<int>(n_threads),
+                                                     static_cast<int>(n_lanes))
+                                        .set_scratch_size(0, Kokkos::PerTeam(scratch));
+                Kokkos::parallel_reduce("chemistry_advance_teams", policy, functor, Kokkos::Sum<uint32_t>(failures));
+            } else {
+                const auto policy = TeamPolicy<false>(static_cast<int>(n_active), static_cast<int>(n_threads),
+                                                      static_cast<int>(n_lanes))
+                                        .set_scratch_size(0, Kokkos::PerTeam(scratch));
+                Kokkos::parallel_reduce("chemistry_advance_teams", policy, functor, Kokkos::Sum<uint32_t>(failures));
+            }
         }
         stats.failures += failures;
     }

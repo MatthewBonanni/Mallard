@@ -20,6 +20,12 @@
 
 namespace chemistry {
 
+/** @brief Index of entry (r, c) of an n x n matrix stored by rows, or by columns. */
+template <bool ColumnMajor>
+KOKKOS_INLINE_FUNCTION constexpr uint32_t dense_index(const uint32_t n, const uint32_t r, const uint32_t c) {
+    return ColumnMajor ? c * n + r : r * n + c;
+}
+
 /**
  * @brief One thread does all the work of a cell.
  *
@@ -71,30 +77,31 @@ struct SerialLanes {
 };
 
 /**
- * @brief The vector lanes of a one-thread team (TeamPolicy(cells, 1, V))
- *        share the work of a cell. Scalar code runs on every lane with the
- *        same values; reductions accumulate each lane's strided share in
- *        index order and then the shares in lane order, so their result
- *        depends on V only. Needs scratch_bytes(V) of level-0 team scratch.
+ * @brief All threads and vector lanes of a team (TeamPolicy(cells, T, V),
+ *        T * V lanes) share the work of a cell. Scalar code runs on every
+ *        lane with the same values; reductions accumulate each lane's strided
+ *        share in index order and then the shares in lane order, so their
+ *        result depends on T * V only. Needs scratch_bytes(T * V) of level-0
+ *        team scratch.
  */
 template <typename Member>
-struct VectorLanes {
+struct TeamLanes {
     static constexpr bool column_major = true;  // dense matrices: a column's rows contiguous across lanes
     const Member & member;
     uint32_t lanes;
     double * partial;    // (lanes)
     uint32_t * where;    // (lanes)
 
-    static constexpr size_t scratch_bytes(const uint32_t V) { return V * (sizeof(double) + sizeof(uint32_t)) + 16; }
+    static constexpr size_t scratch_bytes(const uint32_t L) { return L * (sizeof(double) + sizeof(uint32_t)) + 16; }
 
-    KOKKOS_INLINE_FUNCTION VectorLanes(const Member & m, const uint32_t V) : member(m), lanes(V) {
-        partial = static_cast<double *>(m.team_scratch(0).get_shmem(V * sizeof(double)));
-        where = static_cast<uint32_t *>(m.team_scratch(0).get_shmem(V * sizeof(uint32_t)));
+    KOKKOS_INLINE_FUNCTION TeamLanes(const Member & m, const uint32_t L) : member(m), lanes(L) {
+        partial = static_cast<double *>(m.team_scratch(0).get_shmem(L * sizeof(double)));
+        where = static_cast<uint32_t *>(m.team_scratch(0).get_shmem(L * sizeof(uint32_t)));
     }
 
     template <typename F>
     KOKKOS_INLINE_FUNCTION void for_each(const uint32_t n, const F & f) const {
-        Kokkos::parallel_for(Kokkos::ThreadVectorRange(member, n), f);
+        Kokkos::parallel_for(Kokkos::TeamVectorRange(member, n), f);
     }
 
     KOKKOS_INLINE_FUNCTION void sync() const { member.team_barrier(); }
@@ -106,15 +113,15 @@ struct VectorLanes {
 
     template <typename F>
     KOKKOS_INLINE_FUNCTION double sum(const uint32_t n, const F & f) const {
-        const uint32_t V = lanes;
-        Kokkos::parallel_for(Kokkos::ThreadVectorRange(member, V), [&](const uint32_t l) {
+        const uint32_t L = lanes;
+        Kokkos::parallel_for(Kokkos::TeamVectorRange(member, L), [&](const uint32_t l) {
             double s = 0.0;
-            for (uint32_t i = l; i < n; i += V) s += f(i);
+            for (uint32_t i = l; i < n; i += L) s += f(i);
             partial[l] = s;
         });
         member.team_barrier();
         double s = 0.0;
-        for (uint32_t l = 0; l < V; l++) s += partial[l];
+        for (uint32_t l = 0; l < L; l++) s += partial[l];
         member.team_barrier();
         return s;
     }
@@ -122,11 +129,11 @@ struct VectorLanes {
     template <typename F>
     KOKKOS_INLINE_FUNCTION double argmax_abs(const uint32_t first, const uint32_t n, const F & f,
                                              uint32_t & index) const {
-        const uint32_t V = lanes;
-        Kokkos::parallel_for(Kokkos::ThreadVectorRange(member, V), [&](const uint32_t l) {
+        const uint32_t L = lanes;
+        Kokkos::parallel_for(Kokkos::TeamVectorRange(member, L), [&](const uint32_t l) {
             double largest = -1.0;
             uint32_t at = n;
-            for (uint32_t i = first + l; i < n; i += V) {
+            for (uint32_t i = first + l; i < n; i += L) {
                 const double v = Kokkos::fabs(f(i));
                 if (v > largest) {
                     largest = v;
@@ -139,7 +146,7 @@ struct VectorLanes {
         member.team_barrier();
         double largest = -1.0;
         index = n;
-        for (uint32_t l = 0; l < V; l++) {
+        for (uint32_t l = 0; l < L; l++) {
             if (partial[l] > largest || (partial[l] == largest && where[l] < index)) {
                 largest = partial[l];
                 index = where[l];
