@@ -177,7 +177,8 @@ logging::Items describe_mesh(const Mesh & mesh) {
 
 bool writes_variable(const toml::value & input, const std::string & name) {
     if (!input.contains("write_data")) return false;
-    for (const auto & output : toml::find<std::vector<toml::value>>(input, "write_data")) {
+    const auto outputs = toml::find<std::vector<toml::value>>(input, "write_data");
+    for (const auto & output : outputs) {
         if (!output.contains("variables")) continue;
         const auto variables = toml::find<std::vector<std::string>>(output, "variables");
         if (std::find(variables.begin(), variables.end(), name) != variables.end()) return true;
