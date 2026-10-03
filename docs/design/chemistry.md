@@ -1,7 +1,7 @@
 # Design: finite-rate chemistry
 
 Status: accepted (see [Decisions on the open questions](#decisions-on-the-open-questions)).
-Implementation follows the [milestones](#10-milestones); done: 1.
+Implementation follows the [milestones](#10-milestones); done: 1, 2, 3, 4, 5, 6, 7, 8.
 
 Mallard today solves a single calorically perfect gas. This document adds
 multicomponent, thermally perfect mixtures and finite-rate chemistry with
@@ -153,9 +153,11 @@ struct Mixture {                       // POD of Views, captured by value in ker
 `e(T, Y) = sum_k Y_k e_k(T)` is monotone (`cv > 0`), so Newton on `T` with
 `de/dT = cv` converges in 1 to 3 iterations from the previous value of `T`,
 which is cached per cell (it is the `T` column of `primitives`). The iteration
-is safeguarded by a bracket `[T_min, T_max]` (from the thermo ranges) with a
-bisection fallback, and stops at `|dT| < 1e-10 T` (double) or `1e-5 T`
-(float). Newton is needed once per cell per RK stage and at the start and end
+is safeguarded by a bracket (half the highest lower bound to twice the lowest
+upper bound of the species' fits: the common fitted range, with some
+extrapolation) with a bisection fallback, and stops at `|dT| < 1e-10 T`. The
+thermodynamics are in double precision in every build (decision 7), so float
+builds use the same tolerance. Newton is needed once per cell per RK stage and at the start and end
 of each chemistry step (which carries `T` as an unknown, section 4); face
 states never need it (section 3).
 
@@ -189,9 +191,15 @@ They become functions of `W` and per-side `(gamma, e0)`:
 - `rho E = p / (gamma - 1) + rho e0 + rho |u|^2 / 2`,
   `a = sqrt(gamma p / rho)`, `H = (rho E + p) / rho`.
 - **Rusanov, HLL, HLLC** need only `U`, `F` and `a` per side: direct
-  generalization. Einfeldt speeds use Roe-averaged `u` and
-  `a_roe^2 = (sqrt(rho_L) a_L^2 + sqrt(rho_R) a_R^2) / (sqrt(rho_L) + sqrt(rho_R))
-  + eta_2 (u_R - u_L)^2` (Einfeldt 1988), which needs no `gamma`.
+  generalization. Einfeldt speeds use the perfect-gas Roe averages with
+  `sqrt(rho)`-weighted averages of `gamma` and `e0`,
+  `a_roe^2 = (gamma_roe - 1) (H_roe - e0_roe - |u_roe|^2 / 2)`, so that a mixture
+  whose sides share `gamma` and have `e0 = 0` gets exactly the perfect-gas
+  speeds (Einfeldt's 1988 `gamma`-free estimate
+  `(sqrt(rho_L) a_L^2 + sqrt(rho_R) a_R^2) / (sqrt(rho_L) + sqrt(rho_R)) + eta_2 (u_R - u_L)^2`
+  was the plan, but it differs from the perfect-gas solver's speeds, and the
+  one-species mixture could not then reproduce it; implementation, milestone 3).
+  The low-Mach correction uses each side's `gamma` in its Mach number.
 - **Roe and RHLL** need a Roe average for a variable-`gamma` gas
   (Shuen, Liou & van Leer 1990; Glaister 1988). They come in a later
   milestone; until then a mixture run rejects them at input.
@@ -255,7 +263,13 @@ The design:
      characteristic field at that face (species and entropy waves share the
      eigenvalue `u_n`), stored by the flow pass as one byte per face;
    - MUSCL: least-squares gradients with one limiter value per cell, the
-     minimum of Barth-Jespersen (or Venkatakrishnan) over all scalars.
+     minimum of Barth-Jespersen (or Venkatakrishnan) over all scalars, with
+     the flow block's neighbors and ghost placement. The gradients are
+     stored (`N_DIM` words per scalar and cell; recomputing them in the
+     species-flux kernel instead is a milestone-10 memory option), and the
+     limiter value is reduced further so that every `Y_k` stays in `[0, 1]`
+     and `gamma - 1` keeps at least half its cell value at every face
+     (the physical bounds of item 3).
    Least-squares reconstruction reproduces constants, so with shared weights
    `sum_k Y_k = 1` at every face point to round-off.
 3. **Bounds**: one scaling `theta` per cell
@@ -269,6 +283,22 @@ The design:
 4. **Troubled-cell indicator**: today's density-jump variance misses species
    interfaces at constant density (common in non-premixed flames). It becomes
    the maximum of the variances of `rho` and of the mixture molar mass `W`.
+
+As implemented (milestone 4): the primitive eigenvectors take the face
+average of `W` and the sound speed from the average of the two cells' frozen
+`gamma`; the entropy field's choice on each face side is stored as one byte
+(`0xFF` for the large stencil, else a bitmask of the kept sector stencils,
+averaged with equal weights as TENO does); the scalars' face values are not
+stored but recomputed from the stencil weights twice per stage, once for
+`theta` and the face values of `gamma` and `e0` before the flux, once for the
+species slots after it. The local-range bound of troubled cells clips smooth
+extrema where the indicator flags a smooth but coarsely resolved field: a
+smooth composition wave on 16^3 hexahedra flags every cell at TENO5 and
+converges at about third order there, at fifth order once resolved (2D).
+At sharp contacts between gases of different `gamma` the conservative
+scheme's pressure error stays at 2-3% under refinement with TENO5 (the contact
+stays a few cells wide), against a slow decrease with MUSCL: double flux
+(milestone 5) is the remedy.
 
 This makes species reconstruction a sequence of dot products with weights
 already computed for the flow block: no smoothness indicators per species and
@@ -290,6 +320,21 @@ accumulation gets a second slot for the energy flux. It is milestone 5, enabled 
 right after the conservative scheme and the interface test that measures the
 oscillations. A TENO/double-flux scheme on unstructured meshes appears not to
 have been published, so this is also where Mallard would be new.
+
+As implemented (milestone 5, `[numerics] double_flux = true`): `(gamma, e0)`
+are frozen per cell once per time step, from the true equation of state at the
+step's start (the temperature seed's only update in this mode, so its history
+stays rank independent), and every stage takes the cells' pressure from the
+frozen relation. Each face point computes the Riemann flux twice, with each
+side's frozen `(gamma, e0)` on both of its states; mass and momentum use the
+mean of the two (conservative, and equal to both at a contact, where HLLC
+returns the upwind physical flux), so `mdot` and the species fluxes stay
+unique, and each side takes its own energy flux (one extra word per face).
+After the step `rho E` is reset to the true equation of state at the pressure
+of the frozen one. There is no shock switch yet: the energy error over the
+multicomponent shock tube is 0.16% of the total energy, with an L1 pressure
+error equal to the conservative scheme's; contacts keep `p` and `u` uniform to
+1e-12 with MUSCL and TENO5.
 
 ### Species fluxes without races
 
@@ -387,6 +432,49 @@ U^n --chem(dt/2)--> U* --SSPRK3 flow step(dt)--> U** --chem(dt/2)--> U^{n+1}
   flow work (TENO troubled cells, species fluxes) uses the dynamic mesh
   rebalancing prepared in [mpi.md, section 10](mpi.md#10-room-for-dynamic-load-balancing),
   with the measured per-cell chemistry cost added to the partition weights.
+
+### As implemented (milestone 8)
+
+`src/solver/solver_chemistry.cpp`: `take_step` runs chemistry over `dt / 2`,
+the flow step, and chemistry over `dt / 2` again; the two halves of
+consecutive steps are not fused yet (each half restarts RODAS from the
+cell's last sub-step, so the cost of the split is one extra Jacobian per
+cell and step; fusing is an optimization for later). Owned cells are
+processed in chunks sized to keep the per-cell work memory (mass fractions,
+RODAS vectors and two `(Ns + 1)^2` matrices) under 1 GiB; in each chunk a
+kernel flags the cells that need chemistry (`T >= T_frozen` and
+`dt/2 max_k |W_k omega_k / rho| > atol / 100` at the current state), a scan
+compacts them into a queue, and one thread per queued cell integrates.
+Halo cells get no chemistry: the halo exchange of the first RK stage
+refreshes them. Chemistry does not update the Newton seed of `T`
+(`T_SEED`): only the RHS does, so halo copies of a cell keep the same seed
+as its owner and runs stay bitwise independent of the rank count (writing
+the seed from chemistry broke this at the 1e-5 level through the ignition
+delay's sensitivity to 1e-10 differences in `T`). `CHEM_H` is restarted;
+`HRR` and `CHEM_COST` are output variables. PLOG (`ln k` linear in `ln p`
+between levels, constant outside, rates at one pressure summed) and
+Chebyshev reactions use `p = C_total R T`, so their Jacobian gains
+`d q / d C_j = q (d ln k / d ln p) / C_total` for every `j` and
+`d q / dT` a `(d ln k / d ln p) / T` term.
+
+Validation (MUSCL, HLLC, SSPRK3, h2o2 mechanism, default tolerances):
+- V7 (`examples/detonation_1d`): with this mechanism the recombination zone
+  of 2H2-O2-7Ar at 6.67 kPa is about 0.8 m (ZND), so a detonation started by
+  a driver at a closed end stays under-supported over practical tubes (it
+  ran steadily 9% below D_CJ over 0.6 m). The case therefore starts from the
+  ZND profile (`tools/znd_restart.py`) instead of an overdriven start. Front
+  speed against D_CJ = 1616.9 m/s: +0.11%, +0.01%, 0.00% at 10, 20, 40 cells
+  per ZND induction length (1.525 mm); induction length -4.5%, -1.8%, +2.7%
+  (one cell at 40 is 2.5%); peak pressure 174.8 kPa against the von
+  Neumann 174.7 kPa.
+- V6 (`examples/reactive_shock_tube`): reaction front at 230 us at
+  99.625, 99.662, 99.644 mm with 50, 25, 12.5 um cells (within one coarse
+  cell of the finest); peak T 2875.2, 2876.1, 2876.6 K and peak p 316.6,
+  315.7, 315.7 kPa.
+- A100 with one cell per thread: these 1D cases (2,400 to 16,000 cells) run
+  at 0.2-2 M cells/s, latency-bound (4-14 ms per step, 60-90% in chemistry);
+  a CPU with 8 threads reaches 0.6 M cells/s on them. Milestone 10's
+  team-per-cell kernels and larger meshes are what the GPU needs.
 
 ## 5. Chemistry
 
@@ -537,6 +625,19 @@ column), then chain-ruled to `(Y, T)`.
 Unit tests compare the Jacobian against finite differences of the rates, and
 the rates against Cantera, at random states.
 
+As implemented (milestone 6, `src/chemistry/kinetics.h`): one table set per
+mechanism, compressed rows per reaction for the forward orders, the products
+(reverse orders), the nonzero net coefficients and the non-default third-body
+efficiencies; elementary, three-body and falloff (Lindemann, Troe, SRI)
+reactions, explicit colliders `(+AR)`, irreversible reactions, non-integer
+forward orders, duplicates, rate constants in any units. The kinetics layer
+returns the rates of progress with `d q / dT` at fixed concentrations, the
+production rates, and the dense `d omega / d C`; the chain rule to the
+reactor's `(Y, T)` is the integrator's (milestone 7). Rates of progress and
+production rates match Cantera to 1e-10 for h2o2, GRI-3.0 and a test
+mechanism with every reaction type; both derivatives match Richardson-
+extrapolated finite differences to 1e-6 of their row norms.
+
 ### Integrator
 
 The first integrator is an adaptive Rosenbrock method with an embedded error
@@ -569,6 +670,27 @@ struct ChemistryIntegrator {
                          std::optional<ForcingView> forcing, CostView cost) = 0;
 };
 ```
+
+As implemented (milestone 7, `src/chemistry/rosenbrock.h`, `reactor.h`):
+RODAS with Hairer's coefficients (`rodas.f`), one cell per thread, dense LU
+with partial pivoting in per-cell work memory (`2 (Ns + 1)^2 + 16 Ns + 4 Nr + 10`
+doubles: the Jacobian is kept across rejected sub-steps). The error norm is
+the RMS of `err_i / (atol_i + rtol max(|y0_i|, |y1_i|))` (Hairer's), with
+`atol` on `Y` only and one `rtol` (default 1e-6) on `Y` and `T`; sub-step
+factor `0.9 err^(-1/4)` within [0.2, 6], no growth right after a rejection.
+Sub-steps to `Y_k < -atol` or non-finite errors are rejected. At the end of
+each call, negative `Y_k` are clipped, `Y` renormalized and `T` recomputed
+from the initial `e`. The reactor Jacobian in `(Y, T)` includes the `T`
+dependence of `cv` (a new `d cp / dT` in the thermo tables); it matches
+finite differences to 1e-6 of the row norm for the three test mechanisms.
+`MallardReactor` is constant volume only; constant pressure (another
+Jacobian, no solver use) is left until a case needs it. V1/V2 at the
+default tolerances, in device kernels, with each run split into three
+calls as splitting steps would: ignition delays within 1.4e-4 (H2/air,
+h2o2) and 3e-6 (CH4/air, GRI-3.0) of Cantera's at rtol 1e-12, `T` at 0.5
+and 2 delays within 1%, equilibrium `T` within 0.1 K and mass fractions
+within 1e-4 over the 36 cases. V3 (large mechanisms) moves to milestone 10
+with the sparse LU.
 
 ### Precision
 
@@ -731,6 +853,11 @@ surrogate `(gamma, e0)`:
 `farfield` uses the Riemann invariants with each side's frozen `gamma`.
 Catalytic walls and species-specific wall fluxes are out of scope.
 
+Milestone 3 supports `extrapolation`, `symmetry`, `wall_adiabatic` (slip, as
+mixtures are inviscid until milestone 9), `upt` and `p_out` for mixtures;
+`farfield`, `dirichlet` and `p_out_average` are rejected at input until they
+are needed.
+
 ## 9. Output and restart
 
 - **VTU variables**: `Y_<name>`, `X_<name>` (any species, or `Y_*`, `X_*`
@@ -739,8 +866,9 @@ Catalytic walls and species-specific wall fluxes are out of scope.
   step), and with transport `MU`, `LAMBDA`, `D_<name>`.
 - **Restart format version 2**: the header gains the list of variable names,
   so restarts map fields by name: `RHO`, `RHOU_*`, `RHOE`, then
-  `RHOY_<species>`, then the auxiliary fields `T` and `CHEM_H` (last
-  chemistry sub-step). The auxiliary fields make restarted runs bit-identical
+  `RHOY_<species>`, then the auxiliary fields `T_SEED` (the cached Newton
+  seed of `T`, named apart from the output variable `T`, which is recomputed
+  from the state) and `CHEM_H` (last chemistry sub-step). The auxiliary fields make restarted runs bit-identical
   (they seed Newton and the chemistry step size). Reading checks the species
   names against the mechanism; a restart can start a reacting run from a
   non-reacting multicomponent one, and a mechanism change that keeps names
@@ -815,9 +943,11 @@ the mechanism file used by the run, and committed as small CSV files with the
 Cantera version recorded, so the tests themselves need no Cantera. Same
 mechanism, same thermo and transport, so differences are Mallard's numerics.
 
-Mechanisms used throughout: H2/O2 of
-[Burke et al. 2012](https://doi.org/10.1002/kin.20603) (13 species with Ar,
-He, N2), GRI-Mech 3.0 (53 species, 325 reactions;
+Mechanisms used throughout: the H2/O2 submechanism of GRI-Mech 3.0 with Ar
+and N2 (`mechanisms/h2o2.yaml`, 10 species, 29 reactions, from Cantera's
+data; it stands in for [Burke et al. 2012](https://doi.org/10.1002/kin.20603),
+whose file Cantera does not ship, and can be swapped for it without code
+changes), GRI-Mech 3.0 (53 species, 325 reactions;
 [source](http://combustion.berkeley.edu/gri-mech/version30/text30.html), ships
 with Cantera), and for performance a ~100-species skeletal mechanism (e.g.
 HyChem Jet-A, [Wang et al. 2018](https://doi.org/10.1016/j.combustflame.2018.07.012))
@@ -837,7 +967,7 @@ Species counts are taken from the files when they are added.
 | Transport fits and mixture properties | Cantera `mixture-averaged` | Relative 1e-6 |
 | Perfect-gas regression | Current solver | All existing tests bit-identical without a mechanism |
 | Single-species constant-`cp` mixture | Perfect-gas solver, same `gamma`, `R` | Sod and 2D Riemann: agreement to 1e-12 (different arithmetic, same scheme) |
-| `sum Y = 1`, positivity, conservation | Exact | `max |sum_k rho Y_k - rho| / rho < 1e-13` (1e-6 float) after 1000 steps of a multispecies Riemann problem; `min Y_k >= 0`; each `sum_cells V rho Y_k` conserved to round-off without chemistry |
+| `sum Y = 1`, positivity, conservation | Exact | `max |sum_k rho Y_k - rho| / rho < 1e-13` (1e-5 float) after 1000 steps of a multispecies Riemann problem; `min Y_k >= 0`; each `sum_cells V rho Y_k` conserved to round-off without chemistry |
 | Species advection, smooth | Exact (translated profile) | Design order of MUSCL and TENO3-5 on triangles, quads, tets, hexes |
 | Rank and thread independence | Single rank, one thread | Reacting 2D case on 1-4 ranks and 1/4 threads: bit-identical |
 | Restart | Uninterrupted run | Reacting case restarted mid-run: bit-identical |

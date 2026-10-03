@@ -114,6 +114,21 @@ translation = [1.0, 0.0]
 | `Pr` | (`navier_stokes`) Prandtl number, default 0.72 |
 | `viscosity_model` | (`navier_stokes`) `constant` (default) or `sutherland` |
 | `T_mu_ref`, `sutherland_S` | (`sutherland`) Reference temperature (default 273.15) and Sutherland temperature (default 110.4) |
+| `gas` | `perfect` (default): a calorically perfect gas set by the keys above; `mixture`: a thermally perfect mixture of the species of a mechanism (no `gamma`, `p_ref`, `T_ref`, `rho_ref`) |
+| `mechanism` | (`mixture`) A [Cantera YAML](https://cantera.org/stable/yaml/index.html) file, e.g. `mechanisms/h2o2.yaml` (see `mechanisms/README.md`); Chemkin files convert with Cantera's `ck2yaml` |
+| `phase` | (`mixture`) Phase of the file to use; default the first |
+
+Gas mixtures (`gas = "mixture"`) react when the input has a `[chemistry]`
+table, and need `type = "euler"` and the `Rusanov`, `HLL` or `HLLC` Riemann solver; any face
+reconstruction works. Species thermodynamics are NASA-7, NASA-9 or constant-cp
+polynomials from the file, evaluated in double precision in every build. Each
+species is transported (`rho Y_k`) with mass-flux upwinding, so mass fractions
+stay in [0, 1] and sum to one; all mass fractions share one stencil and one
+limiter per cell (MUSCL), or the stencils TENO chose for the contact field
+(TENO, which reconstructs the flow in primitive variables for mixtures and
+also flags cells by jumps of the molar mass). The scheme is conservative: at contacts between gases of different
+`cp / cv` (e.g. cold hydrogen and hot air) the pressure is perturbed at the
+percent level on coarse meshes; `double_flux` (in `[numerics]`) removes that.
 
 ## `[initialize]`
 
@@ -122,6 +137,8 @@ translation = [1.0, 0.0]
 | `type` | `constant`, `analytical` or `restart` |
 | `u` | `constant`: `[u_x, u_y]`; `analytical`: one expression in `x`, `y`, `z` per component |
 | `rho`, `p`, `T` | `constant`: `p` and `T`; `analytical`: exactly two of the three, as expressions in `x`, `y`, `z` |
+| `X` or `Y` | (mixtures) Mole or mass fractions by species, e.g. `X = { H2 = 2.0, O2 = 1.0, AR = 7.0 }`; normalized, unlisted species are zero. `analytical`: expressions (or numbers) per listed species |
+| `balance` | (mixtures, `analytical`) Species taking `1 - sum` of the listed fractions; without it the listed fractions are normalized |
 | `n_subdivisions` | (`analytical`) Resolution of the cell averages. 2D: each cell's triangles are split into `n_subdivisions`² sub-triangles (default 4). 3D: each of the cell's tetrahedra is integrated with a 64-point rule on each of `n_subdivisions`³ pieces (default 2) |
 | `file` | (`restart`) Restart file to resume from. Restart files list their variables by name (format version 2) and are read by name; files of version 1 (Mallard 0.3 and earlier) are still read |
 
@@ -141,7 +158,7 @@ the zone's faces whose centers satisfy the expression.
 | `wall_adiabatic` | Wall (no-slip for `navier_stokes`, slip for `euler`) with zero heat flux | `u` (wall velocity, optional) |
 | `wall_isothermal` | Wall at temperature `T` | `T`, `u` (optional) |
 | `wall_heat_flux` | Wall with heat flux `q` into the fluid | `q`, `u` (optional) |
-| `upt` | Inflow with fixed velocity, pressure and temperature | `u`, `p`, `T` |
+| `upt` | Inflow with fixed velocity, pressure and temperature | `u`, `p`, `T` (and `X` or `Y` for mixtures) |
 | `farfield` | Characteristic far field for a free stream: the outgoing Riemann invariant comes from the interior, the incoming one from the free stream, so waves leave and the boundary works for inflow, outflow and tangential flow alike | `u`, `p`, `T` (free stream) |
 | `dirichlet` | Exterior state from expressions in `x`, `y`, `z`, `t`, evaluated at face centers at every stage | `rho`, `u` (one expression per component), `p` |
 | `p_out` | Outlet: imposes `p` if the outflow is subsonic | `p` |
@@ -154,6 +171,7 @@ the zone's faces whose centers satisfy the expression.
 | `riemann_solver` | `Rusanov`, `HLL`, `HLLC` (default), `Roe`, or `RHLL` (rotated hybrid HLL-Roe, carbuncle-free) |
 | `time_integrator` | `FE`, `SSPRK3` (default) or `RK4` |
 | `check_nan` | Stop if the solution becomes non-finite |
+| `double_flux` | (gas mixtures) `true` for the double-flux scheme: each cell's energy is updated with its own `cp / cv` and energy offset frozen over the time step on both sides of its faces, and reset to the true equation of state after the step, so pressure and velocity stay exactly uniform across contacts between different gases. Energy is then not exactly conserved (about 0.2% over a multicomponent shock tube). Default `false` |
 | `low_mach_cutoff` | Low-Mach correction of the convective flux: the velocity jump across each interior face is scaled by `z = min(1, max(M_L, M_R, low_mach_cutoff))` before the Riemann solver, so that upwind dissipation scales with the flow speed rather than the sound speed. Default 0.1; 1 disables it. See [`numerics/overview.md`](numerics/overview.md) |
 
 ### `[numerics.face_reconstruction]`
@@ -164,7 +182,7 @@ the zone's faces whose centers satisfy the expression.
 | `limiter` | (`MUSCL`) `venkatakrishnan` (default), `barth_jespersen` or `none` |
 | `venkatakrishnan_K` | (`MUSCL`) Venkatakrishnan threshold constant, default 5 |
 | `order` | (`TENO`) Order of accuracy, 3 to 6, default 5. In 3D, faces use Dunavant (triangles) or Gauss (quadrilaterals) rules exact to this order, capped at degree 5 on triangles |
-| `stencil_factor` | (`TENO`) Large-stencil size as a multiple of the number of polynomial coefficients, default 2. Smaller values (e.g. 1.5) are markedly less dissipative for fine smooth structures (Shu-Osher entropy waves: 50% more amplitude at 200 cells) but less robust at discontinuities. |
+| `stencil_factor` | (`TENO`) Minimum large-stencil size as a multiple of the number of polynomial coefficients, default 2; a stencil grows past it until its reconstruction's Lebesgue constant is at most 10. Smaller values (e.g. 1.5) are markedly less dissipative for fine smooth structures (Shu-Osher entropy waves: 50% more amplitude at 200 cells) but less robust at discontinuities. |
 | `small_stencil_size` | (`TENO`) Cells per sector stencil, default 10 (18 in 3D) |
 | `troubled_threshold` | (`TENO`) Troubled-cell threshold on the density-jump variance, default 1e-3 |
 | `troubled_upper` | (`TENO`) Variance at which the adaptive cutoff reaches its largest value (most dissipative), default 1e-2 |
@@ -173,6 +191,35 @@ the zone's faces whose centers satisfy the expression.
 | `max_condition` | (`TENO`) Stencils grow until the least-squares system's condition estimate is below this, default 1e8 |
 | `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options; anything else is detected and recomputed. Distributed runs write one file per rank, `<cache_file>.r<rank>-of-<ranks>`, for that rank count and partition, and record the halo depth the stencils need, so a cached run sets up its halo once. Hilbert and graph partitions repeat for the same mesh and rank count. Size per cell: about 2.5 / 4 / 6 / 11 KB in 2D and 10 / 19 / 36 KB (hexahedra) or 9 / 14 / 33 / 74 KB (tetrahedra) in 3D for orders 3 / 4 / 5 / 6, e.g. 9.4 GB for 64^3 hexahedra at order 5; reading it takes seconds, against minutes of setup in 3D |
 | `bound_preserving` | (`TENO`) Scale troubled-cell polynomials to keep density and pressure within the neighbors' range, default false |
+
+## `[chemistry]`
+
+Finite-rate chemistry of gas mixtures (`gas = "mixture"` with a mechanism
+that has reactions). Each step is Strang split: every owned cell that needs
+it is advanced as an adiabatic, constant-volume reactor over `dt / 2`, then
+the flow takes its step, then the reactors take another `dt / 2`. The
+integrator is RODAS, an adaptive Rosenbrock method with the analytical
+Jacobian, in double precision in every build.
+
+| Key | Description |
+|---|---|
+| `enabled` | `false` keeps the mixture non-reacting (default `true`) |
+| `integrator` | `rosenbrock` (the default and only choice so far) |
+| `coupling` | `strang` (the default and only choice so far) |
+| `rtol` | Relative tolerance on the mass fractions and `T` (default `1e-6`) |
+| `atol` | Absolute tolerance on the mass fractions (default `1e-10`) |
+| `max_steps` | Sub-steps allowed per cell and half step (default 100000); more stop the run |
+| `T_frozen` | No chemistry in cells below this temperature (default 0) |
+
+Cells whose mass fractions would change by less than `atol / 100` over the
+half step at their current rates are skipped. Reaction types: elementary,
+three-body, falloff (Lindemann, Troe, SRI), `pressure-dependent-Arrhenius`
+(PLOG) and `Chebyshev`. Output variables: `HRR` (heat release rate,
+W/m^3) and `CHEM_COST` (chemistry sub-steps of the cell in the last step);
+restart files also hold `CHEM_H`, each cell's last sub-step, so restarted
+runs repeat the uninterrupted one exactly. The progress rows add the share of
+cells advanced in the last half step and the most sub-steps of a cell in the
+last step, and the summary the chemistry's share of the wall time.
 
 ## `[[forces]]`
 
@@ -249,5 +296,28 @@ forces color, e.g. under `mpirun`); logs written to files are plain ASCII.
 | `prefix` | Output path prefix; directories are created as needed |
 | `format` | `vtu` (with a `.pvd` series next to it) or `restart` |
 | `interval` / `time_interval` | Write every this many steps / this much simulation time (exactly one). With `time_interval` the time step is shortened to land on each output time. |
-| `variables` | (`vtu`) Any of `RHO`, `RHOU_X`, `RHOU_Y`, (3D) `RHOU_Z`, `RHOE`, `U_X`, `U_Y`, (3D) `U_Z`, `P`, `T`, `H`, `CFL`, the vectors `RHOU` and `U` (written with 3 components, zero z in 2D), and with TENO `TENO_SIGMA` (the troubled-cell indicator; stencil selection is active where it exceeds `troubled_threshold`) |
+| `variables` | (`vtu`) Any of `RHO`, `RHOU_X`, `RHOU_Y`, (3D) `RHOU_Z`, `RHOE`, `U_X`, `U_Y`, (3D) `U_Z`, `P`, `T`, `H`, `CFL`, the vectors `RHOU` and `U` (written with 3 components, zero z in 2D), with TENO `TENO_SIGMA` (the troubled-cell indicator; stencil selection is active where it exceeds `troubled_threshold`), and for mixtures `Y_<species>`, `X_<species>` and `RHOY_<species>` (with `[chemistry]` also `HRR` and `CHEM_COST`). A trailing `*` selects every variable with that prefix, e.g. `Y_*` |
 | `geometry` | (`vtu`) `all` (default) for the volume, or a boundary zone name to write that zone's faces with the values of their adjacent cells (e.g. wall pressure) |
+
+## `MallardReactor`
+
+`MallardReactor -i input.toml` integrates one adiabatic, constant-volume
+reactor with the solver's chemistry kernels (the RODAS Rosenbrock integrator
+with the analytical Jacobian, in double precision) and writes its history as
+CSV (`t`, `T`, `p`, `Y_<species>`). It reads `[physics]` (`mechanism`,
+`phase`), the optional `[chemistry]` table and:
+
+| Key | Description |
+|---|---|
+| `[reactor] type` | `constant_volume` (default; the only type so far) |
+| `[reactor] T`, `p` | Initial temperature and pressure |
+| `[reactor] X` or `Y` | Initial composition, as in `[initialize]` |
+| `[reactor] end_time` | Integration time |
+| `[reactor] output_interval` | Time between CSV rows (default `end_time / 100`); each interval ends like a splitting step: negative mass fractions clipped, mass fractions renormalized, `T` from the conserved energy |
+| `[reactor] output` | CSV file (default `reactor.csv`) |
+| `[chemistry] rtol` | Relative tolerance on `Y` and `T` (default `1e-6`) |
+| `[chemistry] atol` | Absolute tolerance on `Y` (default `1e-10`) |
+| `[chemistry] max_steps` | Sub-steps allowed per output interval (default 100000) |
+
+It prints the ignition delay (time of the maximum of `dT/dt`) when `T` rose
+by more than 400 K. Example: `examples/h2_ignition`.
