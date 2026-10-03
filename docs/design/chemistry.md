@@ -433,6 +433,30 @@ U^n --chem(dt/2)--> U* --SSPRK3 flow step(dt)--> U** --chem(dt/2)--> U^{n+1}
   rebalancing prepared in [mpi.md, section 10](mpi.md#10-room-for-dynamic-load-balancing),
   with the measured per-cell chemistry cost added to the partition weights.
 
+### As implemented (milestone 8)
+
+`src/solver/solver_chemistry.cpp`: `take_step` runs chemistry over `dt / 2`,
+the flow step, and chemistry over `dt / 2` again; the two halves of
+consecutive steps are not fused yet (each half restarts RODAS from the
+cell's last sub-step, so the cost of the split is one extra Jacobian per
+cell and step; fusing is an optimization for later). Owned cells are
+processed in chunks sized to keep the per-cell work memory (mass fractions,
+RODAS vectors and two `(Ns + 1)^2` matrices) under 1 GiB; in each chunk a
+kernel flags the cells that need chemistry (`T >= T_frozen` and
+`dt/2 max_k |W_k omega_k / rho| > atol / 100` at the current state), a scan
+compacts them into a queue, and one thread per queued cell integrates.
+Halo cells get no chemistry: the halo exchange of the first RK stage
+refreshes them. Chemistry does not update the Newton seed of `T`
+(`T_SEED`): only the RHS does, so halo copies of a cell keep the same seed
+as its owner and runs stay bitwise independent of the rank count (writing
+the seed from chemistry broke this at the 1e-5 level through the ignition
+delay's sensitivity to 1e-10 differences in `T`). `CHEM_H` is restarted;
+`HRR` and `CHEM_COST` are output variables. PLOG (`ln k` linear in `ln p`
+between levels, constant outside, rates at one pressure summed) and
+Chebyshev reactions use `p = C_total R T`, so their Jacobian gains
+`d q / d C_j = q (d ln k / d ln p) / C_total` for every `j` and
+`d q / dT` a `(d ln k / d ln p) / T` term.
+
 ## 5. Chemistry
 
 ### Stiff chemistry libraries and integrators
