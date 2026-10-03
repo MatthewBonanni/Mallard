@@ -1,6 +1,6 @@
 # Design: distributed memory (MPI)
 
-Status: accepted design (reviewed in #32). Tracks issue #2.
+Status: accepted design (reviewed in #32), implemented through milestone 5 (see Milestones). Tracks issue #2.
 
 ## Goals
 
@@ -29,7 +29,7 @@ A thin `Comm` class wraps MPI (rank, size, `allreduce` min/sum/max, `alltoallv`,
 The per-stage halo exchange and the time-step `allreduce` go through a `HaloExchange` interface with two backends:
 
 - **MPI** (default): nonblocking point-to-point; device buffers passed directly with GPU-aware MPI, or staged through host memory otherwise.
-- **NCCL** (optional, `Mallard_ENABLE_NCCL`): `ncclSend`/`ncclRecv` inside a group and `ncclAllReduce`, enqueued on the Kokkos execution stream, so the exchange is stream-ordered with the kernels (no host synchronization) and can be captured in a CUDA graph. The NCCL communicator is created from the MPI communicator.
+- **NCCL** (optional, `Mallard_ENABLE_NCCL`): `ncclSend`/`ncclRecv` inside a group and `ncclAllReduce`, enqueued on the Kokkos execution stream, so the exchange is stream-ordered with the kernels (no host synchronization) and can be captured in a CUDA graph. The NCCL communicator is created from the MPI communicator. **Deferred** (milestone 5 measurements): with GPU-aware MPI over NVLink, or over InfiniBand with GPUDirect RDMA (3 us, 26 GB/s between GPUs on different nodes), an exchange costs about 0.1 ms per stage and is overlapped with the interior reconstruction, and a step launches about 30 kernels, so neither stream ordering nor CUDA graphs would recover much; the remaining strong-scaling loss is load imbalance (below).
 
 Setup-time communication (partitioning, migration, I/O) always uses MPI.
 
@@ -37,12 +37,12 @@ Setup-time communication (partitioning, migration, I/O) always uses MPI.
 
 - **Format:** an HDF5 mesh file with global arrays, global ids being row indices: node coordinates, cell connectivity (CSR of node ids; the cell type follows from the node count), boundary faces (CSR) with zone ids, and zone names (layout in `docs/input.md`). Each rank reads a contiguous block of cells, of nodes and of boundary faces, with collective parallel HDF5 I/O (independent reads when HDF5 is not parallel). Node coordinates a rank needs but did not read are fetched later from the rank that read them (section 5).
 - **Converter:** `mallard-mesh-convert` turns Gmsh (2.2/4.1) files into this format, or writes a generated mesh described by an input file in parallel. A Gmsh file is read whole, since it is converted once per mesh; later the converter can stream meshes that don't fit in memory.
-- Generated meshes (`cartesian`, `wedge`, ...) are produced directly in blocks per rank.
-- Small cases may still read Gmsh on every rank, then partition; this is the default below a size threshold.
+- Generated meshes (`cartesian`, `wedge`, ...) are produced directly in blocks per rank, numbered as the serial generators number them.
+- A Gmsh file is read whole by every rank, which keeps only its block; meshes too large for that are converted first. Every source then goes through the same distributed path (`DistributedMesh`); only single-rank runs build the mesh directly.
 
 ### 3. Distributed dual graph
 
-Two cells are adjacent if they share a face. Each rank hashes every face of its cells (sorted global node ids) to an owner rank. One `alltoallv` brings the copies of each face together and pairs them. A second sends each pair back as a graph edge, and boundary faces are matched to zone tags the same way. The result is a distributed CSR graph in ParMETIS layout (`vtxdist`, `xadj`, `adjncy`). Cost is O(faces / ranks) per rank and two all-to-alls.
+Two cells are adjacent if they share a face. Each rank hashes every face of its cells (sorted global node ids) to an owner rank. One `alltoallv` brings the copies of each face together and pairs them; the boundary faces of the mesh file go to the same ranks by the same hash. A second sends each pair back as a graph edge, and each unpaired face back as a boundary face with its zone (the first boundary face in global order that matches it, else `unassigned`). Faces shared by more than two cells, and boundary faces that are interior or not cell faces, are errors on every rank. The result is a distributed CSR graph in ParMETIS layout (`vtxdist`, `xadj`, `adjncy`). Cost is O(faces / ranks) per rank and two all-to-alls.
 
 ### 4. Partitioning
 
@@ -59,12 +59,12 @@ Vertex weights model cost: a base weight per cell plus a term for the TENO stenc
 
 ### 5. Migration
 
-One `alltoallv` sends each cell to its owner: its global id, type, node ids and boundary-zone tags. A second exchange fetches the coordinates of the nodes each rank now needs, from the ranks that read them.
+One `alltoallv` sends each cell to its owner: its global id, owner, node ids and boundary faces (local face index and zone). A second builds a **node directory**: the rank that read each node records the cells using it and their owners. Every node shared by several owners then sends each of them the cells there it does not own, which is halo layer 1. The coordinates of the nodes a rank needs are fetched from the ranks that read them once its halo is complete. The cells' blocks stay on the ranks that read them until setup ends, and serve the halo search.
 
 ### 6. Halo
 
 - **Local numbering:**
-  - Cells: `[owned interior | owned near partition boundary | halo layer 1 | ... | halo layer k]`. Owned cells are in Hilbert order within each group.
+  - Cells: `[owned interior | owned near partition boundary | halo layer 1 | ... | halo layer k]`. Owned cells are in Hilbert order within each group. (Implemented so far: owned cells, then each halo layer, each in global id order.)
   - Faces: faces between owned cells, then faces between an owned and a halo cell, then faces between halo cells that reconstruction needs.
   - Every cell and node keeps its global id.
 - **Depth k:** the number of vertex-neighbor layers any reconstruction needs:
@@ -75,7 +75,8 @@ One `alltoallv` sends each cell to its owner: its global id, type, node ids and 
   | MUSCL | 2 |
   | TENO | stencil radius + 1 |
 
-  TENO's central-stencil gather grows layer by layer until it has enough rows. So the halo is built with a default depth for the TENO order, stencils are computed, and any stencil that touches the halo frontier triggers one more layer for that region. This keeps stencils *identical* to the serial ones, which is what makes results rank-count independent.
+  TENO's central-stencil gather grows layer by layer until it has enough rows. So the halo is built with a default depth, stencils are computed, and if any stencil reaches the halo frontier the halo is deepened on every rank and the setup after the mesh repeats. This keeps stencils *identical* to the serial ones, which is what makes results rank-count independent.
+- **Construction:** a distributed breadth-first search over vertex neighbors. Layer 1 comes from the node directory (section 5); for each further layer, a rank asks the directory for the cells around the nodes of its previous layer that it has not asked about, then fetches the new cells from the ranks whose blocks hold them. Deepening the halo continues the search from the existing layers rather than starting over.
 - **Exchange plan:** for each neighbor rank, the list of local owned cells to send and of halo cells to receive, sorted by global id on both sides.
 
 ### 7. Time stepping
@@ -83,8 +84,10 @@ One `alltoallv` sends each cell to its owner: its global id, type, node ids and 
 Per right-hand-side evaluation:
 
 1. Post nonblocking receives and sends of the conservative state of halo cells, packed into contiguous device buffers. Sends use device pointers with GPU-aware MPI, or a host staging copy otherwise.
-2. **Overlap:** reconstruct and compute fluxes for owned interior cells and their faces while messages are in flight.
-3. Wait, unpack, then reconstruct the near-boundary owned cells and halo layer 1, and compute the remaining faces.
+2. **Overlap:** reconstruct the owned cells whose stencils and face neighbors are all owned (`FaceReconstruction::cells_independent_of_halo`, exact from the stencils rather than a distance bound) while messages are in flight, on a second execution space instance.
+3. Wait, unpack, then reconstruct the near-boundary owned cells and halo layer 1 on the default instance, where they fill the device as the first instance drains. Then come the steps that need every cell: TENO's troubled-cell passes and the fluxes of the faces of owned cells (faces between two halo cells are skipped).
+
+Implemented for TENO, the reconstruction that needs deep halos; FO and MUSCL exchange first and then reconstruct. The first stage of a step reuses the halo that the time-step computation has just filled, so an SSPRK3 step exchanges three times, not four.
 
 Halo layer 1 is reconstructed redundantly so that a single exchange per stage suffices. The alternative, exchanging reconstructed face states at partition faces, would save that layer's work (a surface-to-volume fraction of the TENO cost) but adds a second, dependent message round per stage; at thousands of ranks the extra latency costs more than the redundant work. The choice is contained in the exchange plan and can be revisited with measurements.
 
@@ -119,6 +122,13 @@ Dynamic rebalancing (troubled cells, and so the TENO cost, move with shocks) is 
 
 Setup exchanges are dense `alltoallv` calls, whose count arrays alone are O(ranks) per rank and whose latency grows with the rank count. The face matching and migration genuinely talk to many ranks, but halo growth and node-coordinate fetches have sparse patterns (a rank's partition neighbors and the few ranks whose blocks hold its cells). Beyond about 10k ranks these should move to MPI neighborhood collectives or a sparse NBX exchange (nonblocking sends, `MPI_Ibarrier` to detect completion); planned with milestone 6.
 
+### 12. Periodic boundaries
+
+See `periodic.md`. Periodic node classes are currently found by gathering the
+periodic zones on every rank, O(N^(2/3)) data per rank; the scalable
+alternative (hashing snapped node coordinates, as for faces) is described
+there.
+
 ## Testing
 
 - **Correctness:** run the solver test suite on 1, 2, 3 and 4 ranks (oversubscribed CPUs, Serial backend) in CI with OpenMPI.
@@ -135,8 +145,30 @@ Setup exchanges are dense `alltoallv` calls, whose count arrays alone are O(rank
 1. **Comm layer and build:** `Mallard_ENABLE_MPI`, one-rank stub, CI with `mpirun`.
 2. **Correct multi-rank runs at small scale:** global Gmsh read on every rank, Hilbert partition, halo, exchange, reductions. Rank-count-independence tests for FO, MUSCL, TENO and viscous fluxes.
 3. **Output and restart:** `.pvtu` output; HDF5 restart independent of the partition.
-4. **Scalable setup:** HDF5 mesh format and converter, distributed read, distributed dual graph, dKaMinPar, migration.
-5. **Performance:** communication/computation overlap, GPU-aware MPI, the NCCL backend, single-node 8-GPU scaling study, then launch-overhead work (CUDA graphs, which the stream-ordered NCCL exchange allows) where it matters at small per-rank sizes.
+4. **Scalable setup:** HDF5 mesh format and converter, distributed read, distributed dual graph, dKaMinPar, migration. Done: with generated meshes or HDF5 mesh files no rank holds the global mesh in a distributed run (Gmsh files are still read whole by every rank), and restart files are read by global id, each rank reading only its cells. Setup only (one FO step), CPU, peak memory per rank: 4.1M hexahedra took 6.0 GiB on every rank count before (each rank built the global mesh) and now 3.1 / 1.7 / 0.9 / 0.5 GiB on 2 / 4 / 8 / 16 ranks (setup 40 s -> 19 / 11 / 6.4 / 4.5 s); 16M quadrilaterals 8.7-11 GiB per rank before, now 6.5 / 3.3 / 1.7 / 0.9 GiB; 64M quadrilaterals set up on 16 ranks in 3.3 GiB each.
+5. **Performance:** communication/computation overlap, GPU-aware MPI, the NCCL backend, single-node 8-GPU scaling study, then launch-overhead work (CUDA graphs, which the stream-ordered NCCL exchange allows) where it matters at small per-rank sizes. Done except NCCL and CUDA graphs, deferred (section 1).
+   - **Profile.** Profiled at 8 GPUs on 1M cells. The TENO troubled-cell pass ran one heavy thread per cell, and a rank holds fewer troubled cells than one wave of threads. The pass therefore took one thread's latency (0.6-0.9 ms per stage) on ranks crossed by shocks, and about nothing on the others. The exchanges cost about 0.1 ms per stage each.
+   - **Fixes.**
+     - The troubled passes are split per (cell, sector), per (cell, face, characteristic variable), per (cell, face) and per cell, with the same arithmetic.
+     - The exchange is overlapped with the interior reconstruction (section 7).
+     - Flux and RHS work is limited to owned cells.
+     - The first-stage exchange is reused from the time-step computation.
+     - Results stay bitwise identical.
+   - **Scaling.** 2D Riemann problem (configuration 3), TENO5 on quadrilaterals, HLLC, SSPRK3, double precision, A100-80GB GPUs. Times are seconds per 50 steps, with GPU-aware MPI and the Hilbert partition. Up to 8 GPUs share one node over NVLink. The 16-GPU runs use 4 GPUs on each of 4 nodes, over HDR InfiniBand with GPUDirect RDMA.
+
+     | cells | 1 GPU | 2 | 4 | 8 | 16 | efficiency at 8 / 16 |
+     |---|---|---|---|---|---|---|
+     | 1M | 0.938 | 0.553 | 0.311 | 0.190 | 0.152 | 62% / 38% |
+     | 4M | 3.50 | 1.93 | 1.00 | 0.534 | 0.316 | 82% / 69% |
+     | 16M | | | | 1.93 | 1.01 | 95% from 8 to 16 |
+     | 1M per GPU (weak) | 0.938 | 0.999 | 1.000 | 1.005 | 1.013 | 93% / 93% |
+
+     - Before this milestone, 1M cells on 8 GPUs took 0.287 s (1.038 s on 1 GPU).
+     - The 8 GPUs give the same times on one node as on 2 nodes x 4.
+     - Host-staged MPI is 15-25% slower; the overlap recovers about 10% of it.
+     - dKaMinPar partitions give the same times within a few percent, and 0.141 s on 1M cells at 16 GPUs.
+     - What remains at small per-GPU sizes is the cost of troubled cells concentrated on the ranks crossed by shocks, and of the smooth TENO pass's last partial wave of threads. Dynamic load balancing (section 10) addresses the first.
+6. **Multi-node:** runs across nodes; HDF5/XDMF solution output. Runs across nodes work, with GPUDirect RDMA (milestone 5 table). HDF5/XDMF output is still to do.
 6. **Multi-node:** runs across nodes; HDF5/XDMF solution output.
 
 ## Decisions from review

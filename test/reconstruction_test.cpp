@@ -59,15 +59,14 @@ TEST_P(MeshTypes, LSQGradientExactForLinearFieldInInterior) {
     BoundaryData bd = make_uniform_boundaries(*mesh, BoundaryType::EXTRAPOLATION);
     auto W = linear_cell_field(*mesh);
     Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]> grad("grad", mesh->n_cells);
-    LSQGradientFunctor functor{mesh->offsets_faces_of_cell, mesh->faces_of_cell, mesh->cells_of_face,
-                               mesh->cell_coords, mesh->face_coords, mesh->face_normals, bd, W, grad};
+    LSQGradientFunctor functor = make_gradient(*mesh, bd, W, grad);
     Kokkos::parallel_for(mesh->n_cells, functor);
     auto h_grad = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), grad);
     for (uint32_t i_cell = 0; i_cell < mesh->n_cells; i_cell++) {
         if (is_boundary_cell(*mesh, i_cell)) continue;
         FOR_I_CONSERVATIVE {
-            EXPECT_NEAR(h_grad(i_cell, i, 0), GX[i], 1e-10) << "cell " << i_cell << " var " << (int)i;
-            EXPECT_NEAR(h_grad(i_cell, i, 1), GY[i], 1e-10) << "cell " << i_cell << " var " << (int)i;
+            EXPECT_NEAR(h_grad(i_cell, i, 0), GX[i], 1e-10) << "cell " << i_cell << " var " << static_cast<int>(i);
+            EXPECT_NEAR(h_grad(i_cell, i, 1), GY[i], 1e-10) << "cell " << i_cell << " var " << static_cast<int>(i);
         }
     }
 }
@@ -89,14 +88,13 @@ TEST_P(MeshTypes, LSQGradientExactForLinearFieldWithDirichletBoundaries) {
     Kokkos::deep_copy(bd.face_state, h_state);
     auto W = linear_cell_field(*mesh);
     Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]> grad("grad", mesh->n_cells);
-    LSQGradientFunctor functor{mesh->offsets_faces_of_cell, mesh->faces_of_cell, mesh->cells_of_face,
-                               mesh->cell_coords, mesh->face_coords, mesh->face_normals, bd, W, grad};
+    LSQGradientFunctor functor = make_gradient(*mesh, bd, W, grad);
     Kokkos::parallel_for(mesh->n_cells, functor);
     auto h_grad = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), grad);
     for (uint32_t i_cell = 0; i_cell < mesh->n_cells; i_cell++) {
         FOR_I_CONSERVATIVE {
-            EXPECT_NEAR(h_grad(i_cell, i, 0), GX[i], 1e-10) << "cell " << i_cell << " var " << (int)i;
-            EXPECT_NEAR(h_grad(i_cell, i, 1), GY[i], 1e-10) << "cell " << i_cell << " var " << (int)i;
+            EXPECT_NEAR(h_grad(i_cell, i, 0), GX[i], 1e-10) << "cell " << i_cell << " var " << static_cast<int>(i);
+            EXPECT_NEAR(h_grad(i_cell, i, 1), GY[i], 1e-10) << "cell " << i_cell << " var " << static_cast<int>(i);
         }
     }
 }
@@ -128,9 +126,8 @@ TEST_P(MeshTypes, VertexLSQGradientExactForQuadraticFieldWithDirichletBoundaries
     }
     Kokkos::deep_copy(W, h_W);
     Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]> grad("grad", mesh->n_cells);
-    LSQGradientFunctor faces{mesh->offsets_faces_of_cell, mesh->faces_of_cell, mesh->cells_of_face,
-                             mesh->cell_coords, mesh->face_coords, mesh->face_normals, bd, W, grad};
-    Kokkos::parallel_for(mesh->n_cells, make_vertex_gradient(faces, mesh->offsets_cells_of_cell, mesh->cells_of_cell));
+    LSQGradientFunctor faces = make_gradient(*mesh, bd, W, grad);
+    Kokkos::parallel_for(mesh->n_cells, make_vertex_gradient(faces, *mesh));
     auto h_grad = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), grad);
     for (uint32_t c = 0; c < mesh->n_cells; c++) {
         const rtype x = mesh->h_cell_coords(c, 0), y = mesh->h_cell_coords(c, 1);
@@ -156,7 +153,7 @@ TEST_P(MeshTypes, UnlimitedMUSCLReproducesLinearFieldAtInteriorFaces) {
             FOR_I_CONSERVATIVE {
                 EXPECT_NEAR(h_face_W(i_face, 0, side, i),
                             linear(i, mesh->h_face_coords(i_face, 0), mesh->h_face_coords(i_face, 1)),
-                            1e-10) << "face " << i_face << " side " << (int)side;
+                            1e-10) << "face " << i_face << " side " << static_cast<int>(side);
             }
         }
     }

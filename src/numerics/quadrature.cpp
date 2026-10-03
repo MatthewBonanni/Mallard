@@ -11,6 +11,8 @@
 
 #include "quadrature.h"
 
+#include "log.h"
+
 Quadrature::Quadrature() {
     // Empty
 }
@@ -20,9 +22,9 @@ void Quadrature::copy_host_to_device() {
     Kokkos::deep_copy(weights, h_weights);
 }
 
-GaussLegendre::GaussLegendre(uint8_t order) {
+GaussLegendre::GaussLegendre(uint8_t order_in) {
     this->dim = 1;
-    this->order = order;
+    this->order = order_in;
     switch (order) {
         case 1:
             points = Kokkos::View<rtype **>("points", 1, dim);
@@ -150,9 +152,9 @@ GaussLegendre::GaussLegendre(uint8_t order) {
     copy_host_to_device();
 }
 
-TriangleDunavant::TriangleDunavant(uint8_t order) {
+TriangleDunavant::TriangleDunavant(uint8_t order_in) {
     this->dim = 2;
-    this->order = order;
+    this->order = order_in;
     switch (order) {
         case 1:
             points = Kokkos::View<rtype **>("points", 1, dim);
@@ -185,8 +187,7 @@ TriangleDunavant::TriangleDunavant(uint8_t order) {
             h_weights(2) = 1.0 / 3.0;
             break;
         case 3:
-            print_warning("Quadrature rule TriangleDunavant<3> has negative weights.\n"
-                          "This may cause numerical issues. Use with caution.");
+            logging::warning("quadrature rule TriangleDunavant<3> has negative weights; use with caution.");
 
             points = Kokkos::View<rtype **>("points", 4, dim);
             weights = Kokkos::View<rtype *>("weights", 4);
