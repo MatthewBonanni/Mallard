@@ -363,9 +363,6 @@ void DistributedMesh::distribute(const std::vector<int> & cell_owner) {
     }
     check_all(error);
     owner = cell_owner;
-    // The dual graph only serves the partitioner
-    graph_offsets_ = {};
-    graph_neighbors_ = {};
     cells = Cells();
     halo_index.clear();
     searched_nodes.clear();
@@ -423,6 +420,22 @@ void DistributedMesh::distribute(const std::vector<int> & cell_owner) {
     for (size_t i = 0; i < pushed.size(); i += 2) next_layer.push_back({pushed[i], int(pushed[i + 1])});
     std::sort(next_layer.begin(), next_layer.end());
     next_layer.erase(std::unique(next_layer.begin(), next_layer.end()), next_layer.end());
+}
+
+std::vector<uint64_t> DistributedMesh::owned_to_block(const std::vector<uint64_t> & owned_values) const {
+    const int p = comm::size();
+    const uint32_t n_owned = std::count(cells.layer.begin(), cells.layer.end(), 0);
+    check_all(owned_values.size() == n_owned ? "" : "DistributedMesh::owned_to_block: one value per owned cell.");
+    std::vector<std::vector<uint64_t>> send(p);
+    for (uint32_t i = 0; i < n_owned; i++) {
+        auto & out = send[rank_of_cell(cells.gid[i])];
+        out.push_back(cells.gid[i]);
+        out.push_back(owned_values[i]);
+    }
+    const std::vector<uint64_t> received = comm::exchange(std::move(send)).data;
+    std::vector<uint64_t> values(block.n_cells());
+    for (size_t i = 0; i < received.size(); i += 2) values[received[i] - block.first_cell] = received[i + 1];
+    return values;
 }
 
 void DistributedMesh::grow_layer() {

@@ -62,15 +62,28 @@ class DistributedMesh {
         /** @brief First block cell of every rank, and the total (ParMETIS vtxdist). */
         const std::vector<uint64_t> & cell_distribution() const { return cell_dist; }
 
-        /** @brief Dual graph of the block cells (cells sharing a face), by global id (CSR); until distribute(). */
+        /** @brief Dual graph of the block cells (cells sharing a face), by global id (CSR). */
         const std::vector<uint64_t> & graph_offsets() const { return graph_offsets_; }
         const std::vector<uint64_t> & graph_neighbors() const { return graph_neighbors_; }
 
         /** @brief Vertex average of every block cell (collective). */
         std::vector<std::array<double, N_DIM>> block_cell_centers() const;
 
-        /** @brief Send every block cell to its owner rank, and drop the dual graph (collective). */
+        /**
+         * @brief Send every block cell to its owner rank (collective). Calling
+         *        it again moves the cells to new owners and drops the halo.
+         */
         void distribute(const std::vector<int> & owner);
+
+        /** @brief Owner of every block cell; after distribute(). */
+        const std::vector<int> & block_owner() const { return owner; }
+
+        /**
+         * @brief Values of this rank's owned cells (in global order) moved to
+         *        the ranks whose blocks hold those cells: one value per block
+         *        cell (collective; after distribute()).
+         */
+        std::vector<uint64_t> owned_to_block(const std::vector<uint64_t> & owned_values) const;
 
         /**
          * @brief This rank's mesh: its owned cells in global order, then

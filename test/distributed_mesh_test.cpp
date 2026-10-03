@@ -12,6 +12,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cmath>
+#include <numeric>
+#include <span>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -248,14 +251,36 @@ TEST(DistributedMeshTest, LocalMeshesMatchTheSetupFromTheGlobalMesh) {
     }
 }
 
+namespace {
+
+/** @brief Test weights by global id: the first fifth of the cells (a band of the generated meshes) weighs 20. */
+uint64_t band_weight(uint64_t g, uint64_t n) { return g < n / 5 ? 20 : 1; }
+
+/**
+ * @brief Weights of the block cells as a rebalance gets them: computed by the
+ *        owners of a first partition and moved to the blocks.
+ */
+std::vector<uint64_t> weights_from_owners(DistributedMesh & distributed) {
+    distributed.distribute(partition_hilbert(distributed, comm::size()));
+    Distribution dist;
+    distributed.build_local_mesh(1, dist);
+    std::vector<uint64_t> owned(dist.n_owned);
+    for (uint32_t c = 0; c < dist.n_owned; c++) owned[c] = band_weight(dist.global_cell[c], distributed.n_global_cells());
+    return distributed.owned_to_block(owned);
+}
+
+} // namespace
+
 /**
  * @brief The distributed sample sort must give the same order as sorting all
- *        cells along the curve on one rank, and so equal pieces in curve order.
+ *        cells along the curve on one rank, and parts must start where the
+ *        weight prefix along that order crosses multiples of the total over
+ *        the part count, with the weights moved from the owners.
  */
-TEST(DistributedMeshTest, HilbertPartitionSplitsTheGlobalCurveOrderEvenly) {
+TEST(DistributedMeshTest, HilbertPartitionSplitsTheGlobalCurveOrderByWeight) {
     const toml::value input = parse_toml("[mesh]\n" + mesh_inputs()[0]);
     DistributedMesh distributed(read_mesh_block(input));
-    const std::vector<int> owner = partition_hilbert(distributed, comm::size());
+    const uint64_t n = distributed.n_global_cells();
 
     const auto centers = distributed.block_cell_centers();
     std::vector<double> flat;
@@ -266,8 +291,7 @@ TEST(DistributedMeshTest, HilbertPartitionSplitsTheGlobalCurveOrderEvenly) {
         std::vector<std::vector<double>> send(comm::size(), flat);
         for (const auto & from : comm::alltoallv(send)) all.insert(all.end(), from.begin(), from.end());
     }
-    const uint64_t n = all.size() / N_DIM;
-    ASSERT_EQ(n, distributed.n_global_cells());
+    ASSERT_EQ(all.size() / N_DIM, n);
     std::array<double, N_DIM> lo, hi;
     lo.fill(1e300);
     hi.fill(-1e300);
@@ -284,11 +308,57 @@ TEST(DistributedMeshTest, HilbertPartitionSplitsTheGlobalCurveOrderEvenly) {
         order[c] = {hilbert_key(x, lo, hi), c};
     }
     std::sort(order.begin(), order.end());
-    std::vector<int> expected(n);
-    for (uint64_t k = 0; k < n; k++) expected[order[k].second] = (k * comm::size()) / n;
-    for (uint32_t c = 0; c < distributed.n_block_cells(); c++) {
-        ASSERT_EQ(owner[c], expected[distributed.first_cell() + c]) << "cell " << distributed.first_cell() + c;
+
+    for (const bool weighted : {false, true}) {
+        SCOPED_TRACE(weighted ? "weighted" : "unweighted");
+        const std::vector<uint64_t> weights = weighted ? weights_from_owners(distributed) : std::vector<uint64_t>{};
+        const std::vector<int> owner = partition_hilbert(distributed, comm::size(), weights);
+        uint64_t total = 0;
+        for (uint64_t g = 0; g < n; g++) total += weighted ? band_weight(g, n) : 1;
+        std::vector<int> expected(n);
+        uint64_t prefix = 0;
+        for (const auto & [key, g] : order) {
+            expected[g] = (prefix * comm::size()) / total;
+            prefix += weighted ? band_weight(g, n) : 1;
+        }
+        for (uint32_t c = 0; c < distributed.n_block_cells(); c++) {
+            ASSERT_EQ(owner[c], expected[distributed.first_cell() + c]) << "cell " << distributed.first_cell() + c;
+        }
     }
+}
+
+/** @brief dKaMinPar honors the weights: no part above (1 + epsilon) times the mean weight plus one cell. */
+TEST(DistributedMeshTest, GraphPartitionBalancesTheWeights) {
+    if (!have_graph_partitioner()) GTEST_SKIP() << "built without a graph partitioner";
+    // Big enough parts for the heavy cells: on 32 cells per rank dKaMinPar 3.7 never finishes balancing them
+    const toml::value input = parse_toml(N_DIM == 2 ? "[mesh]\ntype = \"cartesian_tri\"\nNx = 40\nNy = 30\n"
+                                                    : "[mesh]\ntype = \"cartesian_tet\"\nNx = 8\nNy = 6\nNz = 5\n");
+    DistributedMesh distributed(read_mesh_block(input));
+    const std::vector<uint64_t> weights = weights_from_owners(distributed);
+    const std::vector<int> owner = partition_graph(distributed, comm::size(), weights);
+    std::vector<uint64_t> part_weight(comm::size(), 0);
+    for (uint32_t c = 0; c < distributed.n_block_cells(); c++) part_weight[owner[c]] += weights[c];
+    comm::allreduce(std::span<uint64_t>(part_weight), comm::Op::SUM);
+    uint64_t total = 0, max_part = 0;
+    for (uint64_t w : part_weight) {
+        total += w;
+        max_part = std::max(max_part, w);
+    }
+    const double mean = std::ceil(double(total) / comm::size());
+    EXPECT_LE(double(max_part), (1.0 + GRAPH_PARTITION_EPSILON) * mean + 20.0);
+}
+
+/** @brief Relabeling a renumbered copy of the current partition gives back the current partition. */
+TEST(DistributedMeshTest, RelabeledPartsStayWithTheirCurrentRanks) {
+    const toml::value input = parse_toml("[mesh]\n" + mesh_inputs()[0]);
+    DistributedMesh distributed(read_mesh_block(input));
+    const std::vector<uint64_t> weights = weights_from_owners(distributed);
+    const int p = comm::size();
+    const std::vector<int> current = partition_hilbert(distributed, p, weights);
+    std::vector<int> renumbered(current.size());
+    for (size_t c = 0; c < current.size(); c++) renumbered[c] = (current[c] * 7 + 3) % p;
+    if (std::gcd(7, p) != 1) GTEST_SKIP() << "7 must be invertible modulo the rank count";
+    EXPECT_EQ(relabel_parts(current, renumbered, weights, p), current);
 }
 
 TEST(DistributedMeshTest, PeriodicHaloLayersFollowVertexNeighborsAcrossSeams) {
