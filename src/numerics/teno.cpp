@@ -1493,11 +1493,14 @@ struct TENOFunctor {
                      const uint32_t i_cell) const {
         rtype si = 0.0;
         for (uint8_t l = 0; l < n; l++) {
+            // Entry (l, m) is stored at upper_index(min(l, m), max(l, m), NK)
             rtype row = 0.0;
-            for (uint8_t m = 0; m < n; m++) {
-                row += si_matrix(i_cell, (l <= m) ? teno::upper_index(l, m, NK) : teno::upper_index(m, l, NK)) *
-                       coeffs[m][var];
+            uint16_t k = l;
+            for (uint8_t m = 0; m < l; m++) {
+                row += si_matrix(i_cell, k) * coeffs[m][var];
+                k += NK - m - 1;
             }
+            for (uint8_t m = l; m < n; m++) row += si_matrix(i_cell, k++) * coeffs[m][var];
             si += coeffs[l][var] * row;
         }
         return si;
