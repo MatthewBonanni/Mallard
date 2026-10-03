@@ -44,11 +44,17 @@ constexpr double GEOMETRY_TOL = precision_tol<double>(1e-10, 1e-5);
 constexpr double MAX_LEBESGUE = 10.0;
 
 // Stencil candidates are ranked by distance in the metric of the local mesh
-// spacing where its largest to smallest spacing ratio exceeds this. Regular
-// tilings of cubes measure 1 (hexahedra), 2.13 (Kuhn tetrahedra), 1.73
-// (prisms) and 1.57 (pyramids) from their cell shapes alone, and keep
-// physical distance; a 2:1 stretch of Kuhn tetrahedra measures 3.15
+// spacing where its largest to smallest spacing ratio exceeds these. Spacings
+// from the translations between congruent neighbors read regular tilings of
+// cubes as exactly isotropic, so any stretch counts. Spacings from neighbor
+// offsets read them as 1 (hexahedra), 2.13 (Kuhn tetrahedra), 1.73 (prisms)
+// and 1.57 (pyramids) from their cell shapes alone; a 2:1 stretch of Kuhn
+// tetrahedra measures 3.15
+constexpr double LATTICE_ANISOTROPY = 1.0 + 1e-6;
 constexpr double SPACING_ANISOTROPY = 2.5;
+
+// Node offsets of congruent cells agree to this fraction of the cell's extent
+constexpr double CONGRUENCE_TOL = 0.1;
 
 /**
  * @brief Gauss-Legendre nodes and weights on [-1, 1] (Newton iteration).
@@ -285,24 +291,24 @@ void symmetric_eigen(std::array<double, 9> a, double w[3], double v[9]) {
     for (int k = 0; k < 3; k++) w[k] = a[4 * k];
 }
 
+constexpr std::array<double, 9> IDENTITY = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+
 /**
  * @brief Metric of unit determinant whose unit length is the mesh spacing in
- *        every direction, from the second moment m of the offsets of a cell's
- *        neighbors; the identity unless its spacing ratio exceeds
- *        SPACING_ANISOTROPY.
+ *        every direction, from a second moment m of offsets between cells; the
+ *        identity unless its spacing ratio exceeds anisotropy.
  */
-std::array<double, 9> spacing_metric(const double m[9]) {
-    const std::array<double, 9> identity = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+std::array<double, 9> spacing_metric(const double m[9], const double anisotropy) {
     double w[3], v[9];
     symmetric_eigen({m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7], m[8]}, w, v);
-    if (!(std::min({w[0], w[1], w[2]}) > 0.0)) return identity;
+    if (!(std::min({w[0], w[1], w[2]}) > 0.0)) return IDENTITY;
     // Log spacings relative to their mean, and the largest log spacing ratio
     double l[3];
     for (int k = 0; k < 3; k++) l[k] = 0.5 * std::log(w[k]);
     const double mean = (l[0] + l[1] + l[2]) / 3.0;
     for (int k = 0; k < 3; k++) l[k] -= mean;
     const double spread = std::max({l[0], l[1], l[2]}) - std::min({l[0], l[1], l[2]});
-    if (!(spread > std::log(SPACING_ANISOTROPY))) return identity;
+    if (!(spread > std::log(anisotropy))) return IDENTITY;
     std::array<double, 9> metric = {};
     for (int k = 0; k < 3; k++) {
         const double e = std::exp(-2.0 * l[k]);
@@ -314,16 +320,93 @@ std::array<double, 9> spacing_metric(const double m[9]) {
 }
 
 /**
+ * @brief Second moment m of the shortest three independent translations that
+ *        carry cell i onto congruent vertex neighbors: the spacing of the
+ *        tiling's lattice, whatever the cells' shapes. False where the
+ *        neighbors hold no such three.
+ */
+bool lattice_moment(const Mesh & mesh, const uint32_t i, double m[9]) {
+    using Point = std::array<double, 3>;
+    auto node_offsets = [&](const uint32_t c) {
+        std::vector<Point> p(mesh.h_n_nodes_of_cell(c));
+        for (size_t k = 0; k < p.size(); k++) {
+            const uint32_t n = mesh.h_node_of_cell(c, static_cast<uint8_t>(k));
+            for (int a = 0; a < 3; a++) p[k][a] = double(mesh.h_node_coords(n, a)) - double(mesh.h_cell_coords(c, a));
+        }
+        return p;
+    };
+    const std::vector<Point> p0 = node_offsets(i);
+    Point tol;
+    for (int a = 0; a < 3; a++) {
+        double lo = p0[0][a], hi = p0[0][a];
+        for (const Point & q : p0) lo = std::min(lo, q[a]), hi = std::max(hi, q[a]);
+        tol[a] = CONGRUENCE_TOL * (hi - lo);
+    }
+    std::vector<Point> translations;
+    for_each_neighbor(mesh, Visit{i, {0, 0, 0}, {0.0, 0.0, 0.0}}, [&](const Visit & nb) {
+        if (nb.cell == i || mesh.h_n_nodes_of_cell(nb.cell) != p0.size()) return;
+        const std::vector<Point> p = node_offsets(nb.cell);
+        for (const Point & q0 : p0) {
+            const bool matched = std::any_of(p.begin(), p.end(), [&](const Point & q) {
+                return std::abs(q[0] - q0[0]) <= tol[0] && std::abs(q[1] - q0[1]) <= tol[1] && std::abs(q[2] - q0[2]) <= tol[2];
+            });
+            if (!matched) return;
+        }
+        Point t;
+        for (int a = 0; a < 3; a++) t[a] = double(mesh.h_cell_coords(nb.cell, a)) + nb.t[a] - double(mesh.h_cell_coords(i, a));
+        translations.push_back(t);
+    });
+    auto dot = [](const Point & a, const Point & b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; };
+    auto cross = [](const Point & a, const Point & b) {
+        return Point{a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    };
+    std::stable_sort(translations.begin(), translations.end(),
+                     [&](const Point & a, const Point & b) { return dot(a, a) < dot(b, b); });
+    // Independent by a margin, so the basis spans the lattice's three spacings
+    std::vector<Point> basis;
+    for (const Point & t : translations) {
+        const double len = std::sqrt(dot(t, t));
+        if (basis.size() == 1) {
+            const Point c = cross(basis[0], t);
+            if (std::sqrt(dot(c, c)) < 0.5 * std::sqrt(dot(basis[0], basis[0])) * len) continue;
+        } else if (basis.size() == 2) {
+            const Point c = cross(basis[0], basis[1]);
+            if (std::abs(dot(c, t)) < 0.5 * std::sqrt(dot(c, c)) * len) continue;
+        }
+        basis.push_back(t);
+        if (basis.size() == 3) break;
+    }
+    if (basis.size() < 3) return false;
+    for (int k = 0; k < 9; k++) m[k] = 0.0;
+    for (const Point & t : basis) {
+        for (int a = 0; a < 3; a++) {
+            for (int b = 0; b < 3; b++) m[3 * a + b] += t[a] * t[b];
+        }
+    }
+    return true;
+}
+
+/**
  * @brief Metric in which the stencil candidates of cell i are ranked: that of
- *        the second moment of its vertex neighbors' centroid offsets, completed
- *        across its boundary faces by the images of the cells at most as far
- *        from the boundary as the cell itself (see spacing_metric).
+ *        its tiling's lattice (see lattice_moment) or, on meshes without one,
+ *        of the second moment of its vertex neighbors' centroid offsets,
+ *        completed across its boundary faces by the images of the cells at
+ *        most as far from the boundary as the cell itself (see spacing_metric).
  */
 std::array<double, 9> ranking_metric(const Mesh & mesh, const Kokkos::View<int32_t *>::host_mirror_type & face_bc,
                                      const Kokkos::View<BoundaryCondition *>::host_mirror_type & bcs, const uint32_t i) {
     using Point = std::array<double, 3>;
     double spread[9] = {};
+    double anisotropy = SPACING_ANISOTROPY;
     if constexpr (N_DIM == 3) {
+        if (lattice_moment(mesh, i, spread)) {
+            // Stretched lattices rank in the neighbors' metric, which keeps them
+            // stable near walls; the lattice's own makes them as fragile there
+            // as the regular tilings
+            if (spacing_metric(spread, LATTICE_ANISOTROPY) == IDENTITY) return IDENTITY;
+            anisotropy = 1.0;
+            std::fill(std::begin(spread), std::end(spread), 0.0);
+        }
         Point x0;
         for (int a = 0; a < 3; a++) x0[a] = double(mesh.h_cell_coords(i, a));
         const double h = std::cbrt(double(mesh.h_cell_volume(i)));
@@ -357,7 +440,7 @@ std::array<double, 9> ranking_metric(const Mesh & mesh, const Kokkos::View<int32
             }
         }
     }
-    return spacing_metric(spread);
+    return spacing_metric(spread, anisotropy);
 }
 
 // Cells per batch of the precomputation, bounding the unpacked per-cell
@@ -2438,7 +2521,7 @@ namespace {
 
 // Version 3 stores each reconstructed cell's tables at their actual stencil sizes; version 4 gathers
 // candidates by interior cells, version 5 sorts them in the mesh-spacing metric
-constexpr char TENO_CACHE_MAGIC[16] = "MALLARD-TENO-5";
+constexpr char TENO_CACHE_MAGIC[16] = "MALLARD-TENO-6";
 constexpr char TENO_CACHE_FAMILY[] = "MALLARD-TENO-";
 
 struct Fnv1a {
