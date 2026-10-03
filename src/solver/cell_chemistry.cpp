@@ -288,6 +288,8 @@ void CellChemistry::init(const Mixture & gas_in, const chemistry::Mechanism & me
         n_lanes = std::min(options.lanes, lanes_max);
     }
     n_threads = n_lanes == 1 ? 1 : (options.threads > 0 ? options.threads : 1);
+    // Binning helps warps (a warp waits for its slowest cell), not CPU threads
+    bin_by_cost = options.bin_by_cost && n_lanes == 1 && lanes_max >= 32;
     if (n_lanes * n_threads > 32) throw std::invalid_argument("chemistry: at most 32 threads and lanes per cell.");
     sparse = chemistry::use_sparse_lu(options.reactor, mechanism);
     if (sparse) pattern = chemistry::make_sparse_lu_pattern(mechanism);
@@ -337,7 +339,7 @@ CellChemistry::Statistics CellChemistry::advance(const StateView & U, const Spec
         stats.active += n_active;
         if (n_active == 0) continue;
         const auto queued = Kokkos::make_pair(0u, n_active);
-        if (n_lanes == 1 && options.bin_by_cost) {
+        if (bin_by_cost) {
             // Neighboring threads get cells of similar cost
             Kokkos::Experimental::sort_by_key(Kokkos::DefaultExecutionSpace(), Kokkos::subview(cost, queued),
                                               Kokkos::subview(queue, queued));

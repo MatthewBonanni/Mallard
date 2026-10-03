@@ -231,7 +231,7 @@ void benchmark(const toml::value & input) {
     logging::items({
         {"Benchmark", std::to_string(n_cells) + " cells from " + std::to_string(n_samples) + " trajectory states (" +
                           std::to_string(n_igniting) + " igniting cells)"},
-        {"Execution", (cells.lanes() == 1 ? "one thread per cell" + std::string(cell_options.bin_by_cost ? ", binned by cost" : "")
+        {"Execution", (cells.lanes() == 1 ? "one thread per cell" + std::string(cells.binned() ? ", binned by cost" : "")
                                            : std::to_string(cells.threads()) + " x " + std::to_string(cells.lanes()) +
                                                  " lanes per cell" +
                                                  (cells.shared_bytes() > 0 ? ", " + std::to_string(cells.shared_bytes() / 1024) +

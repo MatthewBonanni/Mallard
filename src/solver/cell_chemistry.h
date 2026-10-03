@@ -31,7 +31,7 @@
  *        whether a team keeps its factors and vectors in scratch (shared)
  *        memory where they fit (1; default no), and whether
  *        cells integrated by one thread are ordered by their last cost
- *        (binning).
+ *        (binning; on GPUs only).
  */
 struct CellChemistryOptions {
     chemistry::ReactorOptions reactor;
@@ -90,6 +90,9 @@ class CellChemistry {
         /** @brief Threads of a cell's team. */
         uint32_t threads() const { return n_threads; }
 
+        /** @brief Whether cells integrated one per thread are ordered by their last cost (GPUs). */
+        bool binned() const { return bin_by_cost; }
+
         /** @brief Bytes of team scratch memory per cell holding its work memory, 0 if global memory. */
         size_t shared_bytes() const { return fast_bytes; }
 
@@ -102,6 +105,7 @@ class CellChemistry {
         CellChemistryOptions options;
         uint32_t n_lanes = 1;
         uint32_t n_threads = 1;
+        bool bin_by_cost = false;
         size_t fast_bytes = 0;
         bool sparse = false;
         chemistry::SparseLUPattern<> pattern;
