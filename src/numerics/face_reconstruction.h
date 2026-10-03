@@ -285,8 +285,6 @@ class TENO : public FaceReconstruction {
         teno::PackedStencils stencil_large;                // pseudo-inverse width: nk
         Kokkos::View<uint16_t **> stencil_small_size;      // (cell, face); 0 if stencil invalid
         teno::PackedStencils stencil_small;                // the faces' stencils one after another; width NK_SMALL
-        // Memory of the chunks of stencil_large and stencil_small
-        std::vector<Kokkos::View<char *>> stencil_large_storage, stencil_small_storage;
         Kokkos::View<rtype **> si_matrix;                  // (cell, upper_index(l, m)): symmetric
         Kokkos::View<rtype *> troubled;                    // (local cell): sigma, for diagnostics
         Kokkos::View<rtype ***> troubled_coeffs;           // (cell, l, var): scratch for the troubled passes
