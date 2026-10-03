@@ -733,9 +733,13 @@ cell, its bin or its rank, so binning and load balancing only reorder work.
   the lanes' rows of an elimination step or a solve are contiguous. The LU
   with partial pivoting gives the same factors for any lane count.
 - **Choice** (`[chemistry] lanes`, default automatic): a warp per cell on GPUs
-  from 16 species, one thread per cell otherwise (and on CPUs). One thread
-  per cell orders the queued cells by their last cost (`bin_by_cost`), so that
-  a warp's cells take similar numbers of sub-steps.
+  from 16 species, one thread per cell otherwise (and on CPUs).
+- **Cost ordering** (GPUs only; `bin_by_cost` in the benchmark): the queued
+  cells are sorted by the sub-steps they took in their last call, most
+  expensive first. With one thread per cell a warp's cells then take similar
+  numbers of sub-steps; with a team per cell the expensive teams start first
+  and cheap ones fill in behind them instead of leaving a tail. Only the order
+  of work changes, never a cell's result.
 - **Sparse LU** (`[chemistry] sparse`, by default from 30 species when its
   factors fill at most 60% of the dense matrix): the
   Jacobian splits into the static pattern of its mass-action and
@@ -781,34 +785,87 @@ V1/V2/V6/V7 unchanged within their tolerances.
 Baselines (`benchmarks/`, recorded in `benchmarks/baselines.csv`): cells per
 second over one splitting step on states sampled along an ignition (2-38%
 of them igniting, as the ignition's length in the sampled time; "1%": one in
-a hundred), the best of two calls after a
-warm-up, one A100 (CUDA 12.9, double):
+a hundred), the best of the calls after a warm-up, one A100 (CUDA 12.9,
+double). "Thread, unordered, dense" is milestone 8's execution (one thread
+per cell, queue order, dense LU), the "before" of this milestone:
 
 | Case | Species | Execution | dt = 1e-8 s | dt = 1e-6 s |
 |---|---|---|---|---|
-| h2o2 | 10 | thread per cell, binned | 5.60M | 2.63M |
-| | | thread per cell, not binned | 6.74M | 1.37M |
-| h2o2 1% | | thread per cell, binned / not | 6.57M / 6.77M | 2.87M / 2.46M |
-| GRI-3.0 | 53 | warp per cell, sparse LU | 507k | 493k |
-| | | warp per cell, dense LU | 340k | 339k |
-| | | thread per cell, binned, sparse LU | 222k | 126k |
-| GRI-3.0 1% | | warp per cell, sparse LU | 501k | 386k |
-| n-dodecane | 100 | warp per cell, sparse LU | 306k | 27.6k |
-| | | warp per cell, dense LU | 89.6k | 9.8k |
-| n-hexane | 1268 | warp per cell, sparse LU | 5.13k | 196 |
-| | | warp per cell, sparse LU, full Jacobian | 677 | 23 |
-| | | warp per cell, dense LU | 3.9 | (not run) |
+| h2o2 | 10 | thread per cell, ordered (default) | 6.53M | 2.64M |
+| | | thread, unordered, dense | 6.75M | 1.64M |
+| h2o2 1% | | thread, ordered / unordered | 6.51M / 6.73M | 3.33M / 2.47M |
+| GRI-3.0 | 53 | warp per cell, sparse LU, ordered (default) | 525k | 530k |
+| | | warp, sparse, unordered | 531k | 495k |
+| | | warp, dense | 340k | 339k |
+| | | thread, ordered, sparse | 222k | 126k |
+| | | thread, unordered, dense | 121k | 98k |
+| GRI-3.0 1% | | warp, sparse, ordered / unordered | 525k / 531k | 531k / 512k |
+| n-dodecane | 100 | warp per cell, sparse LU, ordered (default) | 308k | 28.9k |
+| | | warp, sparse, unordered | 307k | 27.6k |
+| | | warp, dense | 89.6k | 9.8k |
+| | | thread, unordered, dense | 11.7k | 874 |
+| n-dodecane 1% | | warp, sparse, ordered / unordered | 327k / 305k | 29.0k / 28.1k |
+| n-hexane | 1268 | warp per cell, sparse LU, ordered (default) | 5.13k | 190 |
+| | | warp, sparse, full Jacobian | 677 | 23 |
+| | | warp, dense | 3.9 | (not run) |
 
-Binning pays where cells' costs differ (2x at 1e-6 s, nothing at one
-sub-step per cell, where the sort costs 17%); a warp per cell beats a thread
-per cell 2.3-3.9x at 53 species. The sparse LU is 1.5x faster than the
-dense one at 53 species, 3x at 100 and 1300x at 1268; at 1268 species
-storing only the pattern and the rank-one part (instead of a full Jacobian
-next to the sparse factors) gains another 8x. Work memory in team scratch (`shared`) fits
-fewer cells per multiprocessor and was slower in every case, so it is off by
-default.
+Sub-steps per cell at 1e-6 s (the benchmark's histogram): h2o2 127k cells
+with 1, 53k with 2, 57k with 3-4, 16k with 5-8, 8k with 9-16; GRI-3.0 64.5k
+with 1 and 1k with 3-4; n-dodecane 16.1k with 1 and 256 with 65-128;
+n-hexane 1008 with 1 and 16 with 33-64. At 1e-8 s every cell takes one.
 
-CPU_RESULTS
+Against milestone 8's execution: 1.6x for h2o2 at 1e-6 s (ordering; 3% slower
+at one sub-step per cell, the sort's cost), 4.3-5.4x for GRI-3.0 and 26-33x
+for n-dodecane (warp per cell and sparse LU). A warp per cell beats a thread
+per cell 2.4-3.9x at 53 species (both with the sparse LU); the sparse LU is 1.5x faster than the dense
+one at 53 species, 3x at 100 and 1300x at 1268, where storing only the
+pattern and the rank-one part (instead of a full Jacobian next to the sparse
+factors) gains another 8x. Ordering teams by cost gains 5-7% where a few
+cells take many sub-steps and costs about 1% where all take one. Work memory
+in team scratch (`shared`) fits fewer cells per multiprocessor and was slower
+in every case, so it is off by default.
+
+Full solver on the A100, milestone 8 (main before this milestone) against this
+one at its defaults, time per step (`benchmarks/solver/reactive_shock_tube_2d.toml`,
+2400 x 400 cells, 400 steps; the GRI-3.0 variant with CH4 for H2 on 2400 x 40
+cells, 40 steps; "hot": the same at 1200/1500 K (h2o2) or 1500/1800 K
+(GRI-3.0), where every cell reacts):
+
+| Case | Cells | Milestone 8 | Milestone 10 | Fused half steps |
+|---|---|---|---|---|
+| Reactive shock tube, h2o2 (no cell reacts yet) | 960,000 | 72.7 ms | 67.7 ms | 60.1 ms |
+| The same, GRI-3.0 | 96,000 | 58.2 ms | 44.7 ms | 38.5 ms |
+| Hot, h2o2 | 960,000 | 206 ms | 203 ms | |
+| Hot, GRI-3.0 | 96,000 | 1.04 s | 396 ms | |
+
+Where no cell reacts, the chemistry's cost is the activity check, one
+evaluation of the rates per cell and half step: with GRI-3.0 it still takes
+three quarters of the step (34 of 45 ms), a target for later (a cheaper test,
+or `T_frozen`).
+
+CPU (16 cores of an AMD EPYC 7763, OpenMP, one thread per cell, the same
+cases with 4-16x fewer cells; shared node, about 10% run-to-run noise):
+
+| Case | dt = 1e-8 s | dt = 1e-6 s | Sub-steps at 1e-6 s (igniting cells) |
+|---|---|---|---|
+| h2o2 | 837k | 412k | up to 12 |
+| GRI-3.0 | 73.4k | 72.2k | up to 5 |
+| n-dodecane | 59.4k | 52.7k | 5 |
+| n-hexane | 3.03k | 2.10k | up to 6 |
+
+One A100 thus does the work of 6-8 such 16-core slices (about one 128-core
+node) for h2o2 and GRI-3.0, and of 5 for n-dodecane at 1e-8 s. At 1e-6 s the
+large mechanisms' igniting cells take far more sub-steps on the A100 than on
+CPUs from the same states (n-dodecane 108 against 5, n-hexane up to 44
+against 6), which makes the A100 slower than 16 cores there (28.9k against
+52.7k, 190 against 2.1k cells per second); ignition delays on the A100 still
+match Cantera (V3), so this is a step-size issue, open for later. On the full
+solver (2400 x 40 cells, h2o2, 20 steps; 2400 x 4 cells, GRI-3.0, 10 steps;
+both "hot") milestone 8 and this milestone take 163-169 and 179 ms per step
+(h2o2) and 295 and 270 ms (GRI-3.0); on CPUs the automatic choice is one
+thread per cell and the queue is not reordered (OpenMP hands each thread a
+contiguous block of it, which sorting would fill with the expensive cells:
+3.4x slower for h2o2 at 1e-6 s).
 
 0D ignitions on one CPU core against Cantera 3.2 (CVODES, the same rtol
 1e-6 and atol 1e-10, the same output interval; its sparse preconditioned
@@ -818,10 +875,6 @@ n-hexane 0.61 s sparse / 128 s dense (1.5 / 6.4 s), with ignition delays as
 above. The published GPU numbers (Niemeyer & Sung, Curtis et al., Balos et
 al.) use other GPUs, mechanisms or measures (per-reactor wall time of a
 whole ignition) and were not compared.
-
-Full solver (`benchmarks/solver/reactive_shock_tube_2d.toml`, 960,000 cells,
-h2o2, A100): 60.6 ms per step, 15.8M cells per second, chemistry 13% of the
-time stepping.
 
 ## 6. Transport
 
