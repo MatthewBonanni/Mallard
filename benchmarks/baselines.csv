@@ -21,3 +21,4 @@ A100,ndodecane,0.0156,warp,dense,1e-8,8.96e4
 A100,ndodecane,0.0156,warp,dense,1e-6,9.84e3
 A100,nhexane,0.047,warp,sparse,1e-8,5.13e3
 A100,nhexane,0.047,warp,sparse,1e-6,1.96e2
+A100,nhexane,0.047,warp,dense,1e-8,3.95e0
