@@ -115,8 +115,8 @@ TEST(TransportTest, SpeciesFitsMatchCantera) {
 TEST(TransportTest, MixturePropertiesMatchCantera) {
     // Wilke viscosity, Mathur conductivity and mixture-averaged diffusion
     // coefficients (with Cantera's floor on mole fractions, so that absent
-    // species and a pure species are handled alike), and the unity-Lewis
-    // diffusivity, in device kernels
+    // species and a pure species are handled alike), the unity-Lewis
+    // diffusivity and constant Lewis numbers, in device kernels
     for (const Case & c : CASES) {
         const Mechanism mech = read_mechanism(c.file, c.phase);
         const uint32_t ns = static_cast<uint32_t>(mech.n_species());
@@ -130,10 +130,14 @@ TEST(TransportTest, MixturePropertiesMatchCantera) {
         }
         Kokkos::deep_copy(states, h_states);
         const ThermoTable<> thermo = make_thermo_table(mech);
-        for (const TransportModel model : {TransportModel::MIXTURE_AVERAGED, TransportModel::UNITY_LEWIS}) {
+        // Constant Lewis numbers 1, 2, 3, ... divide the unity-Lewis diffusivity
+        std::vector<double> lewis(ns);
+        for (uint32_t k = 0; k < ns; k++) lewis[k] = 1.0 + k;
+        for (const TransportModel model :
+             {TransportModel::MIXTURE_AVERAGED, TransportModel::UNITY_LEWIS, TransportModel::CONSTANT_LEWIS}) {
             Kokkos::View<double **, Kokkos::LayoutRight> out("out", n, ns + 2);
             Kokkos::parallel_for("mixture_transport", n,
-                                 MixtureFunctor{thermo, make_transport_table(mech, model), states, out});
+                                 MixtureFunctor{thermo, make_transport_table(mech, model, lewis), states, out});
             auto h_out = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), out);
             for (uint32_t i = 0; i < n; i++) {
                 const auto & r = rows[i];
@@ -147,7 +151,9 @@ TEST(TransportTest, MixturePropertiesMatchCantera) {
                         EXPECT_EQ(h_out(i, 2 + k), 0.0) << c.name << ", row " << i;
                         continue;
                     }
-                    const double D_ref = model == TransportModel::MIXTURE_AVERAGED ? r[ref + 2 + k] : r[ref + 2 + ns];
+                    const double D_ref = model == TransportModel::MIXTURE_AVERAGED ? r[ref + 2 + k]
+                                         : model == TransportModel::UNITY_LEWIS   ? r[ref + 2 + ns]
+                                                                                  : r[ref + 2 + ns] / lewis[k];
                     EXPECT_NEAR(h_out(i, 2 + k) / D_ref - 1.0, 0.0, 1e-6)
                         << c.name << " D_" << mech.species[k].name << ", row " << i;
                 }
