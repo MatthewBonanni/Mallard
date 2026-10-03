@@ -13,7 +13,10 @@
 #ifndef CHEMISTRY_THERMO_H
 #define CHEMISTRY_THERMO_H
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <limits>
 
 #include <Kokkos_Core.hpp>
 
@@ -32,16 +35,18 @@ struct MassFractions {
  *        precision in every build: per species its NASA-9 form ranges
  *        (SpeciesThermo), and the ideal-gas mixture properties per unit mass.
  *
- * A plain aggregate of Views, captured by value in kernels. Mixture
- * functions take the mass fractions as any callable y(k).
+ * A plain aggregate of Views in MemorySpace (the device by default, or the
+ * host for setup), captured by value in kernels. Mixture functions take the
+ * mass fractions as any callable y(k).
  */
+template <typename MemorySpace = Kokkos::DefaultExecutionSpace::memory_space>
 struct ThermoTable {
     uint32_t n_species = 0;
-    Kokkos::View<double *> inv_W;               // kmol/kg
-    Kokkos::View<uint32_t *> range_offset;      // (n_species + 1): ranges of species k
-    Kokkos::View<double *> range_upper;         // (range): upper bound; the last range of a species is unbounded
-    Kokkos::View<uint8_t *> upper_closed;       // (species): a bound belongs to the range below it (NASA-7)
-    Kokkos::View<double *[9], Kokkos::LayoutRight> coeffs;  // (range, coefficient)
+    Kokkos::View<double *, MemorySpace> inv_W;                           // kmol/kg
+    Kokkos::View<uint32_t *, MemorySpace> range_offset;                  // (n_species + 1): ranges of species k
+    Kokkos::View<double *, MemorySpace> range_upper;                     // (range): upper bound, unused for a species' last range
+    Kokkos::View<uint8_t *, MemorySpace> upper_closed;                   // (species): a bound belongs to the range below it (NASA-7)
+    Kokkos::View<double *[9], Kokkos::LayoutRight, MemorySpace> coeffs;  // (range, coefficient)
     double T_low = 1.0;                          // bracket of T(e)
     double T_high = 1.0e5;
 
@@ -165,8 +170,53 @@ struct ThermoTable {
     }
 };
 
-/** @brief Copy a mechanism's species thermodynamics to the device. */
-ThermoTable make_thermo_table(const Mechanism & mechanism);
+/** @brief Copy a mechanism's species thermodynamics to MemorySpace. */
+template <typename MemorySpace = Kokkos::DefaultExecutionSpace::memory_space>
+ThermoTable<MemorySpace> make_thermo_table(const Mechanism & mechanism) {
+    ThermoTable<MemorySpace> table;
+    const uint32_t n = static_cast<uint32_t>(mechanism.n_species());
+    table.n_species = n;
+    uint32_t n_ranges = 0;
+    for (const auto & sp : mechanism.species) n_ranges += static_cast<uint32_t>(sp.thermo.coeffs.size());
+
+    table.inv_W = Kokkos::View<double *, MemorySpace>("thermo_inv_W", n);
+    table.range_offset = Kokkos::View<uint32_t *, MemorySpace>("thermo_range_offset", n + 1);
+    table.range_upper = Kokkos::View<double *, MemorySpace>("thermo_range_upper", n_ranges);
+    table.upper_closed = Kokkos::View<uint8_t *, MemorySpace>("thermo_upper_closed", n);
+    table.coeffs = Kokkos::View<double *[9], Kokkos::LayoutRight, MemorySpace>("thermo_coeffs", n_ranges);
+    auto h_inv_W = Kokkos::create_mirror_view(table.inv_W);
+    auto h_offset = Kokkos::create_mirror_view(table.range_offset);
+    auto h_upper = Kokkos::create_mirror_view(table.range_upper);
+    auto h_closed = Kokkos::create_mirror_view(table.upper_closed);
+    auto h_coeffs = Kokkos::create_mirror_view(table.coeffs);
+
+    // Common range of the fits, where every species is fitted
+    double T_min = 0.0, T_max = std::numeric_limits<double>::infinity();
+    uint32_t r = 0;
+    for (uint32_t k = 0; k < n; k++) {
+        const Species & sp = mechanism.species[k];
+        h_inv_W(k) = 1.0 / sp.molecular_weight;
+        h_offset(k) = r;
+        h_closed(k) = sp.thermo.model == ThermoModel::NASA7;
+        for (size_t i = 0; i < sp.thermo.coeffs.size(); i++, r++) {
+            h_upper(r) = sp.thermo.T_bounds[i + 1];
+            for (int j = 0; j < 9; j++) h_coeffs(r, j) = sp.thermo.coeffs[i][j];
+        }
+        T_min = std::max(T_min, sp.thermo.T_bounds.front());
+        T_max = std::min(T_max, sp.thermo.T_bounds.back());
+    }
+    h_offset(n) = r;
+    // T(e) may extrapolate somewhat past the common range; constant cp has no bounds
+    table.T_low = std::max(0.5 * T_min, 1.0);
+    table.T_high = std::isfinite(T_max) ? 2.0 * T_max : 1.0e5;
+
+    Kokkos::deep_copy(table.inv_W, h_inv_W);
+    Kokkos::deep_copy(table.range_offset, h_offset);
+    Kokkos::deep_copy(table.range_upper, h_upper);
+    Kokkos::deep_copy(table.upper_closed, h_closed);
+    Kokkos::deep_copy(table.coeffs, h_coeffs);
+    return table;
+}
 
 } // namespace chemistry
 

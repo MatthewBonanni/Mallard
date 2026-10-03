@@ -12,15 +12,17 @@ add_library(MallardCore STATIC
     mesh/zone.cpp
     boundary/boundary.cpp
     chemistry/mechanism.cpp
-    chemistry/thermo.cpp
     chemistry/units.cpp
     numerics/face_reconstruction.cpp
     numerics/quadrature.cpp
+    numerics/scalar_reconstruction.cpp
     numerics/teno.cpp
     numerics/time_integrator.cpp
+    physics/mixture.cpp
     physics/physics.cpp
     solver/solver.cpp
     solver/solver_initialize.cpp
+    solver/solver_mixture.cpp
     solver/solver_rhs.cpp
     io/data_writer.cpp
     parallel/comm.cpp

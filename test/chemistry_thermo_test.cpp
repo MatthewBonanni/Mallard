@@ -81,7 +81,7 @@ void expect_close(double value, double reference, double rtol, const std::string
 // Device kernels live outside the test bodies (nvcc rejects extended lambdas there)
 
 /** @brief cp/R, h/RT, s/R of species k(i) at T(i), evaluated on the device. */
-Kokkos::View<double *[3]>::host_mirror_type species_properties(const ThermoTable & table,
+Kokkos::View<double *[3]>::host_mirror_type species_properties(const ThermoTable<> & table,
                                                                const std::vector<uint32_t> & k,
                                                                const std::vector<double> & T) {
     const size_t n = k.size();
@@ -91,7 +91,7 @@ Kokkos::View<double *[3]>::host_mirror_type species_properties(const ThermoTable
     Kokkos::deep_copy(d_T, Kokkos::View<const double *, Kokkos::HostSpace>(T.data(), n));
     Kokkos::View<double *[3]> out("out", n);
     Kokkos::parallel_for("species_properties", n, KOKKOS_LAMBDA(const size_t i) {
-        const ThermoTable::Powers p = ThermoTable::powers(d_T(i));
+        const ThermoTable<>::Powers p = ThermoTable<>::powers(d_T(i));
         out(i, 0) = table.cp_R(d_k(i), p);
         out(i, 1) = table.h_RT(d_k(i), p);
         out(i, 2) = table.s_R(d_k(i), p);
@@ -103,7 +103,7 @@ Kokkos::View<double *[3]>::host_mirror_type species_properties(const ThermoTable
  * @brief Per state (T, Y): cp, cv, h, e, R, then T recovered from e from a
  *        nearby and from a distant first guess.
  */
-Kokkos::View<double *[7]>::host_mirror_type mixture_properties(const ThermoTable & table,
+Kokkos::View<double *[7]>::host_mirror_type mixture_properties(const ThermoTable<> & table,
                                                                const std::vector<double> & T,
                                                                const std::vector<double> & Y) {
     const size_t n = T.size();
@@ -173,7 +173,7 @@ TEST(ChemistryThermoTest, ReaderMatchesCanteraCoefficientsAndMolecularWeights) {
 
 TEST(ChemistryThermoTest, SpeciesPropertiesMatchCanteraIncludingExtrapolation) {
     for (const Case & c : CASES) {
-        const ThermoTable table = make_thermo_table(read_mechanism(c.file, c.phase));
+        const ThermoTable<> table = make_thermo_table(read_mechanism(c.file, c.phase));
         const Csv ref(c.name + "_thermo.csv");
         std::vector<uint32_t> k;
         std::vector<double> T;
@@ -193,7 +193,7 @@ TEST(ChemistryThermoTest, SpeciesPropertiesMatchCanteraIncludingExtrapolation) {
 
 TEST(ChemistryThermoTest, MixturePropertiesMatchCanteraAndTemperatureInvertsEnergy) {
     for (const Case & c : CASES) {
-        const ThermoTable table = make_thermo_table(read_mechanism(c.file, c.phase));
+        const ThermoTable<> table = make_thermo_table(read_mechanism(c.file, c.phase));
         const Csv ref(c.name + "_mixture.csv");
         ASSERT_EQ(ref.columns.size(), 6 + table.n_species) << c.name;
         std::vector<double> T, Y;
