@@ -33,6 +33,11 @@ const std::string H2O2 = SOURCE_DIR + "/mechanisms/h2o2.yaml";
 const std::string TWO_NITROGENS = SOURCE_DIR + "/test/data/chemistry/test_transport.yaml";
 constexpr double PI = std::numbers::pi;
 
+/** @brief A tolerance for double builds, or its counterpart for float builds. */
+constexpr double tol(double in_double, double in_float) {
+    return sizeof(rtype) == sizeof(double) ? in_double : in_float;
+}
+
 /**
  * @brief A strip of nx cells over [0, Lx], one cell thick with symmetry
  *        planes around it, or, periodic, three cells thick and periodic in x and
@@ -125,7 +130,7 @@ TEST(MixtureTransportTest, BinaryInterdiffusionMatchesTheErfSolution) {
     EXPECT_LT(err, 5e-4);
     // No flow: the species fluxes sum to zero, so rho and p stay uniform
     for (uint32_t c = 0; c < solver.get_mesh()->n_owned(); c++) {
-        EXPECT_NEAR(static_cast<double>(solver.h_primitives(c, N_DIM)) / p, 1.0, 1e-9);
+        EXPECT_NEAR(static_cast<double>(solver.h_primitives(c, N_DIM)) / p, 1.0, tol(1e-9, 1e-3));
     }
 }
 

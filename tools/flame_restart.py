@@ -91,8 +91,11 @@ def main():
             f.write(np.asarray(field, dtype="<f8").tobytes())
 
     t_stop = args.flame_times * delta / S_L
-    X_in = ", ".join(f"{s} = {v:.17g}" for s, v in zip(species, Y[0] / gas.molecular_weights /
-                                                        (Y[0] / gas.molecular_weights).sum()) if v > 0.0)
+    # The fresh mixture without the traces that diffuse into Cantera's inlet
+    X0 = Y[0] / gas.molecular_weights
+    X0[X0 < 1e-8 * X0.sum()] = 0.0
+    X0 /= X0.sum()
+    X_in = ", ".join(f'"{s}" = {v:.17g}' for s, v in zip(species, X0) if v > 0.0)
     h = 10.0 * dx
     zero = ", 0.0" if dim == 3 else ""
     extra_bc = ('[[boundaries]]\nname = "back"\ntype = "symmetry"\n'

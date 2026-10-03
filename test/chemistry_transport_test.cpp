@@ -106,7 +106,9 @@ TEST(TransportTest, SpeciesFitsMatchCantera) {
                 }
             }
         }
-        RecordProperty(c.name + "_max_rel_error", std::to_string(worst));
+        std::ostringstream text;
+        text << std::scientific << worst;
+        RecordProperty(c.name + "_max_rel_error", text.str());
     }
 }
 
