@@ -23,6 +23,7 @@
 #include <string>
 #include <vector>
 
+#include "gmsh_fixtures.h"
 #include "test_fixtures.h"
 #include "data.h"
 #include "data_writer.h"
@@ -172,12 +173,6 @@ $Elements
 $EndElements
 )";
 
-std::string write_temp(const std::string & name, const std::string & content) {
-    const auto path = std::filesystem::temp_directory_path() / name;
-    std::ofstream(path) << content;
-    return path.string();
-}
-
 void check_mixed_mesh(const std::string & file) {
     Mesh mesh;
     mesh.init_file(file);
@@ -208,7 +203,7 @@ void check_mixed_mesh(const std::string & file) {
         }
         FOR_I_DIM EXPECT_NEAR(closure[i], 0.0, 1e-14) << "cell " << c;
     }
-    EXPECT_NEAR(total, 1.0 + 0.5 + 1.0 / 3.0 + 0.1, 1e-14);
+    EXPECT_NEAR(total, 1.0 + 0.5 + 1.0 / 3.0 + 0.1, roundoff(1e-14));
 }
 
 /**

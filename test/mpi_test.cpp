@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "comm.h"
+#include "gmsh_fixtures.h"
 #include "mesh_block.h"
 #include "mpi_compare.h"
 #include "partition.h"
@@ -168,6 +169,21 @@ TEST(MPITest, PeriodicRunsMatchSerialAcrossSeamsCutByThePartition) {
     expect_matches_serial(periodic_box("cartesian_tri", "type = \"MUSCL\"\n", NS, "[\"x\", \"y\"]", none, 20));
 }
 
+TEST(MPITest, PeriodicZonePairsOfAGmshMeshMatchSerial) {
+    const std::string file = write_temp_shared("mallard_mpi_periodic.msh", jittered_mixed_mesh(16));
+    std::string input = box_input("cartesian", "type = \"TENO\"\norder = 4\n", EULER, "", 12);
+    const std::string generated = "type = \"cartesian\"\n";
+    input.replace(input.find(generated), generated.size(), "type = \"file\"\nfilename = \"" + file + "\"\n");
+    input += "[[periodic]]\nzones = [\"left\", \"right\"]\ntranslation = [1.0, 0.0]\n"
+             "[[periodic]]\nzones = [\"bottom\", \"top\"]\ntranslation = [0.0, 1.0]\n"
+             "[parallel]\npartitioner = \"hilbert\"\n";
+    if (comm::size() > 1) {
+        EXPECT_GT(seam_faces_cut_by_partition(input), 0u);
+    }
+    expect_matches_serial(input);
+    comm::barrier();
+}
+
 TEST(MPITest, NavierStokesWithBoundaryConditionsMatchesSerial) {
     expect_matches_serial(box_input(
         "cartesian", "type = \"MUSCL\"\n", NS,
@@ -176,6 +192,19 @@ TEST(MPITest, NavierStokesWithBoundaryConditionsMatchesSerial) {
             "type = \"wall_isothermal\"\nT = 1.2\nu = [0.1, 0.0]\n",
             "type = \"wall_adiabatic\"\n"),
         25));
+}
+
+TEST(MPITest, BoundaryConditionsSurviveTheHaloRebuild) {
+    // TENO stencils need a deeper halo than the first one, so the local mesh is
+    // built twice. Dirichlet face lists of the first mesh used to survive, and
+    // their faces, renumbered, could have no Dirichlet state in the second.
+    expect_matches_serial(box_input(
+        "cartesian", "type = \"TENO\"\norder = 3\n", EULER,
+        bcs("type = \"dirichlet\"\nrho = \"1.0\"\nu = [\"0.3\", \"0.0\"]\np = \"1.0 + 0.1 * sin(6 * y) * sin(20 * t)\"\n",
+            "type = \"p_out_average\"\np = 1.0\n",
+            "type = \"dirichlet\"\nrho = \"1.0\"\nu = [\"0.0\", \"0.0\"]\np = \"1.0\"\n",
+            "type = \"dirichlet\"\nrho = \"1.0\"\nu = [\"0.0\", \"0.0\"]\np = \"1.0\"\n"),
+        10));
 }
 
 namespace {
@@ -200,7 +229,7 @@ std::vector<double> gather(Solver & solver) {
     std::vector<double> U(n_global * N_CONSERVATIVE, 0.0);
     for (uint32_t c = 0; c < mesh->n_owned(); c++) {
         const uint64_t g = mesh->n_global_cells ? mesh->h_global_cell_id[c] : c;
-        FOR_I_CONSERVATIVE U[g * N_CONSERVATIVE + i] = solver.h_conservatives(c, i);
+        FOR_I_CONSERVATIVE U[g * N_CONSERVATIVE + i] = double(solver.h_conservatives(c, i));
     }
     // A serial run holds every cell on every rank already
     if (mesh->n_global_cells > 0) comm::allreduce(std::span<double>(U), comm::Op::SUM);

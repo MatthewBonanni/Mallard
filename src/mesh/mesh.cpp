@@ -44,7 +44,7 @@ void Mesh::init(const toml::value & input) {
     const std::vector<PeriodicPair> periodic = periodic_pairs(input);
     if (get_type() == MeshType::FROM_FILE) {
         std::string filename = toml::find_or<std::string>(input, "mesh", "filename", "mesh.msh");
-        this->init_file(filename);
+        this->init_file(filename, periodic);
         return;
     }
     uint32_t Nx = toml::find_or<uint32_t>(input, "mesh", "Nx", 100);
@@ -81,10 +81,24 @@ void Mesh::init(const toml::value & input) {
 
 std::vector<Mesh::PeriodicPair> Mesh::periodic_pairs(const toml::value & input) {
     std::vector<PeriodicPair> pairs;
+    if (input.contains("periodic")) {
+        const auto entries = toml::find<std::vector<toml::value>>(input, "periodic");
+        for (const auto & entry : entries) {
+            const auto zones = toml::find<std::vector<std::string>>(entry, "zones");
+            const std::vector<rtype> t = find_real_vector(entry, "translation");
+            if (zones.size() != 2 || t.size() != N_DIM) {
+                throw InputError("[[periodic]] needs zones = [A, B] and a translation with " +
+                                 std::to_string(N_DIM) + " components.");
+            }
+            PeriodicPair pair{zones[0], zones[1], {}};
+            FOR_I_DIM pair.translation[i] = t[i];
+            pairs.push_back(pair);
+        }
+    }
     if (!input.contains("mesh") || !input.at("mesh").contains("periodic")) return pairs;
     if (toml::find_or<std::string>(input, "mesh", "type", "file") == "file") {
-        throw std::runtime_error("[mesh] periodic applies to generated meshes; periodic zones of mesh files are "
-                                 "not supported yet.");
+        throw InputError("[mesh] periodic applies to generated meshes; pair the zones of a mesh file with "
+                         "[[periodic]].");
     }
     const rtype L[3] = {find_real_or(input, "mesh", "Lx", 1.0), find_real_or(input, "mesh", "Ly", 1.0),
                         find_real_or(input, "mesh", "Lz", 1.0)};
@@ -225,12 +239,12 @@ void Mesh::compute_cell_centroids() {
             const rtype xa = h_node_coords(a, 0), ya = h_node_coords(a, 1);
             const rtype xb = h_node_coords(b, 0), yb = h_node_coords(b, 1);
             const rtype cross = xa * yb - xb * ya;
-            A += 0.5 * cross;
+            A += 0.5_r * cross;
             Cx += (xa + xb) * cross;
             Cy += (ya + yb) * cross;
         }
-        h_cell_coords(i_cell, 0) = Cx / (6.0 * A);
-        h_cell_coords(i_cell, 1) = Cy / (6.0 * A);
+        h_cell_coords(i_cell, 0) = Cx / (6.0_r * A);
+        h_cell_coords(i_cell, 1) = Cy / (6.0_r * A);
     }
 }
 
@@ -303,8 +317,8 @@ void Mesh::compute_face_normals() {
         int32_t i_cell_0 = h_cells_of_face(i_face, 0);
         rtype x_cell_0 = h_cell_coords(i_cell_0, 0);
         rtype y_cell_0 = h_cell_coords(i_cell_0, 1);
-        rtype x_face_centroid = 0.5 * (x0 + x1);
-        rtype y_face_centroid = 0.5 * (y0 + y1);
+        rtype x_face_centroid = 0.5_r * (x0 + x1);
+        rtype y_face_centroid = 0.5_r * (y0 + y1);
         rtype dx_cell_0 = x_face_centroid - x_cell_0;
         rtype dy_cell_0 = y_face_centroid - y_cell_0;
         rtype dot = dx_cell_0 * h_face_normals(i_face, 0) +
@@ -321,7 +335,7 @@ void Mesh::compute_face_centroids() {
         uint32_t i_node_0 = h_node_of_face(i_face, 0);
         uint32_t i_node_1 = h_node_of_face(i_face, 1);
         FOR_I_DIM {
-            h_face_coords(i_face, i) = 0.5 * (h_node_coords(i_node_0, i) + h_node_coords(i_node_1, i));
+            h_face_coords(i_face, i) = 0.5_r * (h_node_coords(i_node_0, i) + h_node_coords(i_node_1, i));
         }
     }
 }
