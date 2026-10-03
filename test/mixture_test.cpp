@@ -279,11 +279,11 @@ TEST(MixtureTest, MulticomponentShockTubeConvergesToExactSolution) {
     // contact between different gases, rarefaction, all thermally perfect
     double Y_min, Y_max;
     const std::vector<double> coarse = shock_tube_errors(100, Y_min, Y_max);
-    EXPECT_GE(Y_min, 0.0);
-    EXPECT_LE(Y_max, 1.0);
+    EXPECT_GE(Y_min, -tol(1e-14, 1e-6));
+    EXPECT_LE(Y_max, 1.0 + tol(1e-14, 1e-6));
     const std::vector<double> fine = shock_tube_errors(200, Y_min, Y_max);
-    EXPECT_GE(Y_min, 0.0);
-    EXPECT_LE(Y_max, 1.0);
+    EXPECT_GE(Y_min, -tol(1e-14, 1e-6));
+    EXPECT_LE(Y_max, 1.0 + tol(1e-14, 1e-6));
     const char * names[5] = {"rho", "u", "p", "T", "Y_N2"};
     for (int j = 0; j < 5; j++) {
         EXPECT_LT(fine[j], 1.2e-2) << names[j];

@@ -130,6 +130,11 @@ set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(YAML_CPP_BUILD_CONTRIB OFF CACHE BOOL "" FORCE)
 set(YAML_CPP_INSTALL OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(yaml-cpp)
+# yaml-cpp has no device code, and nvcc cannot compile its bundled dragonbox:
+# Kokkos' nvcc_wrapper passes it to the host compiler
+if(Kokkos_ENABLE_CUDA AND CMAKE_CXX_COMPILER MATCHES "nvcc_wrapper")
+    target_compile_options(yaml-cpp PRIVATE --host-only)
+endif()
 
 # Include other external libraries
 include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/src/external/toml11/include")
