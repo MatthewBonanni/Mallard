@@ -163,7 +163,7 @@ struct TransportTable {
 
 /**
  * @brief The transport table of a mechanism for a model.
- * @param lewis Constant Lewis numbers per species (CONSTANT_LEWIS); empty: 1.
+ * @param lewis Constant Lewis numbers per species (CONSTANT_LEWIS only); empty: 1.
  */
 template <typename MemorySpace = Kokkos::DefaultExecutionSpace::memory_space>
 TransportTable<MemorySpace> make_transport_table(const Mechanism & mechanism, const TransportModel model,
@@ -190,7 +190,7 @@ TransportTable<MemorySpace> make_transport_table(const Mechanism & mechanism, co
     size_t pair = 0;
     for (uint32_t k = 0; k < n; k++) {
         h_W(k) = mechanism.species[k].molecular_weight;
-        h_inv_Le(k) = lewis.empty() ? 1.0 : 1.0 / lewis[k];
+        h_inv_Le(k) = (model == TransportModel::CONSTANT_LEWIS && !lewis.empty()) ? 1.0 / lewis[k] : 1.0;
         for (int c = 0; c < 5; c++) {
             h_visc(k, c) = fits.viscosity[k][c];
             h_cond(k, c) = fits.conductivity[k][c];
