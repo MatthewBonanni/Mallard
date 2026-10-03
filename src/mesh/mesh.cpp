@@ -82,7 +82,8 @@ void Mesh::init(const toml::value & input) {
 std::vector<Mesh::PeriodicPair> Mesh::periodic_pairs(const toml::value & input) {
     std::vector<PeriodicPair> pairs;
     if (input.contains("periodic")) {
-        for (const auto & entry : toml::find<std::vector<toml::value>>(input, "periodic")) {
+        const auto entries = toml::find<std::vector<toml::value>>(input, "periodic");
+        for (const auto & entry : entries) {
             const auto zones = toml::find<std::vector<std::string>>(entry, "zones");
             const std::vector<rtype> t = find_real_vector(entry, "translation");
             if (zones.size() != 2 || t.size() != N_DIM) {
