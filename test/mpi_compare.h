@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <set>
 #include <span>
 #include <string>
 #include <vector>
@@ -25,13 +26,10 @@
 #include "test_fixtures.h"
 
 /**
- * @brief Run the input distributed and serially; every rank compares the
- *        gathered distributed solution with its serial one.
+ * @brief Every rank compares the gathered solution of a finished distributed
+ *        run with that of the same input run serially.
  */
-inline void expect_matches_serial(const std::string & input) {
-    Solver distributed;
-    distributed.init(parse_toml(input));
-    distributed.run();
+inline void expect_matches_serial(Solver & distributed, const std::string & input) {
     distributed.copy_device_to_host();
 
     Solver serial;
@@ -65,6 +63,45 @@ inline void expect_matches_serial(const std::string & input) {
     // Faces and stencils are ordered by global cell ids, so every rank count
     // computes the same sums in the same order
     EXPECT_EQ(max_rel, 0.0) << "on " << comm::size() << " ranks";
+}
+
+/** @brief Run the input distributed and serially, and compare. */
+inline void expect_matches_serial(const std::string & input) {
+    Solver distributed;
+    distributed.init(parse_toml(input));
+    distributed.run();
+    expect_matches_serial(distributed, input);
+}
+
+/**
+ * @brief Steps the input distributed, moving cells to new owners after steps
+ *        3 and 6 (weights heavy on the first, then the last quarter of the
+ *        cells by global id), and compares with the serial run.
+ */
+inline void expect_rebalanced_run_matches_serial(const std::string & input, uint32_t n_steps) {
+    Solver solver;
+    solver.init(parse_toml(input));
+    if (!solver.is_distributed()) GTEST_SKIP() << "needs more than one rank";
+    const uint64_t n = solver.get_mesh()->n_global_cells;
+    uint64_t moved = 0;
+    while (solver.get_step() < n_steps) {
+        solver.calc_dt();
+        solver.take_step();
+        const uint32_t step = solver.get_step();
+        if (step != 3 && step != 6) continue;
+        const auto & dist = solver.get_distribution();
+        const std::set<uint64_t> before(dist.global_cell.begin(), dist.global_cell.begin() + dist.n_owned);
+        std::vector<uint64_t> weights(dist.n_owned);
+        for (uint32_t c = 0; c < dist.n_owned; c++) {
+            const uint64_t g = dist.global_cell[c];
+            weights[c] = (step == 3 ? g < n / 4 : g >= 3 * n / 4) ? 8 : 1;
+        }
+        solver.rebalance(weights);
+        const auto & now = solver.get_distribution();
+        for (uint32_t c = 0; c < now.n_owned; c++) moved += !before.count(now.global_cell[c]);
+    }
+    EXPECT_GT(comm::allreduce(moved, comm::Op::SUM), 0u);
+    expect_matches_serial(solver, input);
 }
 
 #endif // MPI_COMPARE_H

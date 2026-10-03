@@ -70,6 +70,13 @@ TEST(MPI3DTest, TENOOnHexahedraMatchesSerial) {
     expect_matches_serial(blast_input("cartesian", "type = \"TENO\"\norder = 5\n"));
 }
 
+TEST(MPI3DTest, RebalancedTENOOnMixedCellsMatchesSerial) {
+    expect_rebalanced_run_matches_serial(
+        box_input("cartesian_mixed", "type = \"TENO\"\norder = 3\n", "type = \"euler\"\n") +
+            "[parallel]\nrebalance = true\n",
+        8);
+}
+
 TEST(MPI3DTest, MUSCLOnMixedCellsMatchesSerial) {
     expect_matches_serial(box_input("cartesian_mixed", "type = \"MUSCL\"\n", "type = \"euler\"\n"));
 }

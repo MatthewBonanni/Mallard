@@ -82,6 +82,12 @@ class DataWriter {
                   const std::vector<std::string> & restart_variables = {});
 
         /**
+         * @brief Point the writer at new data and a new local mesh, e.g. after
+         *        a rebalance, keeping its schedule and series (collective).
+         */
+        void bind(std::vector<Data> & data, std::shared_ptr<Mesh> mesh);
+
+        /**
          * @brief Whether a snapshot is due at this step/time.
          */
         bool due(uint64_t step, rtype t) const;
@@ -138,6 +144,7 @@ class DataWriter {
         rtype t_last = -std::numeric_limits<rtype>::infinity();
         uint64_t step_last = std::numeric_limits<uint64_t>::max();
         DataFormat format;
+        std::vector<std::string> variables;
         std::vector<Field> fields;
         std::shared_ptr<Mesh> mesh;
         std::vector<std::pair<rtype, std::string>> history;

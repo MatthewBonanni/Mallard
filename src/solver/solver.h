@@ -132,6 +132,15 @@ class Solver {
          */
         std::array<rtype, 4> integrate_flow_statistics();
 
+        /**
+         * @brief Repartition the mesh by these weights of the owned cells
+         *        (local order), move the solution to the new owners and rebuild
+         *        everything that depends on the partition. The solution stays
+         *        bitwise that of a run without rebalancing (collective;
+         *        distributed runs with parallel.rebalance = true).
+         */
+        void rebalance(const std::vector<uint64_t> & weights);
+
         // Public because nvcc rejects device lambdas in non-public member functions
         void update_average_pressure_outlets(StateView solution);
         void calc_dt();
@@ -196,6 +205,7 @@ class Solver {
         void print_summary(const std::string & stop) const;
         template <typename F>
         void timed_phase(const std::string & name, F && f);
+        void bind_outputs();  // Force-monitor faces and writers on the current local mesh
         void write_data(bool force = false);
         void write_forces();
         void write_integrals();
@@ -203,7 +213,8 @@ class Solver {
     private:
         bool distribute = true;
         int halo_layers = 0;
-        std::unique_ptr<DistributedMesh> setup;  // during init only
+        std::unique_ptr<DistributedMesh> setup;  // during init, or the whole run when rebalancing
+        bool rebalancing = false;
         std::string partitioner;
         Distribution distribution;
         HaloExchange halo;

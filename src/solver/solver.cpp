@@ -81,7 +81,7 @@ int Solver::init(const toml::value & input_in) {
     }
     // The cache describes the local mesh at this halo depth
     if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) teno->save_cache(halo_layers);
-    setup.reset();
+    if (!rebalancing) setup.reset();
     timed_phase("fields and output", [&] {
         allocate_memory();
         init_rhs_split();
@@ -200,6 +200,7 @@ void Solver::init_mesh() {
             if (partitioner != "graph" && partitioner != "hilbert") {
                 throw InputError("parallel.partitioner = \"" + partitioner + "\" is not one of: graph, hilbert.");
             }
+            rebalancing = toml::find_or<bool>(input, "parallel", "rebalance", false);
             setup = std::make_unique<DistributedMesh>(read_mesh_block(input), Mesh::periodic_pairs(input));
             setup->distribute(partitioner == "graph" ? partition_graph(*setup, comm::size())
                                                      : partition_hilbert(*setup, comm::size()));
@@ -421,6 +422,11 @@ void Solver::init_boundaries() {
 }
 
 void Solver::init_sources() {
+    // Runs again after a rebalance: boundary data and source field are per local mesh
+    has_gravity = false;
+    source_expressions.clear();
+    source_summary.clear();
+    t_source = -1.0;
     if (!input.contains("source")) {
         return;
     }
@@ -615,15 +621,6 @@ void Solver::init_output() {
             if (comm::allreduce(uint32_t(zone != nullptr), comm::Op::SUM) == 0) {
                 throw std::runtime_error("forces: unknown boundary zone " + monitor.zone + ".");
             }
-            std::vector<uint32_t> owned;
-            for (uint32_t i = 0; zone && i < zone->n_faces(); i++) {
-                const uint32_t f = zone->h_faces(i);
-                if (static_cast<uint32_t>(mesh->h_cells_of_face(f, 0)) < mesh->n_owned()) owned.push_back(f);
-            }
-            monitor.faces = Kokkos::View<uint32_t *>("force_faces", owned.size());
-            auto h_faces = Kokkos::create_mirror_view(monitor.faces);
-            for (size_t i = 0; i < owned.size(); i++) h_faces(i) = owned[i];
-            Kokkos::deep_copy(monitor.faces, h_faces);
             monitor.interval = toml::find_or<uint64_t>(entry, "interval", 1);
             if (monitor.interval == 0) {
                 throw std::runtime_error("forces: interval must be positive.");
@@ -652,10 +649,6 @@ void Solver::init_output() {
         if (integral_monitor.interval == 0) {
             throw std::runtime_error("integrals: interval must be positive.");
         }
-        if (!viscous_gradients.is_allocated()) {
-            viscous_gradients = Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]>("viscous_gradients", mesh->n_cells);
-            viscous_gradient = make_vertex_gradient(make_gradient(*mesh, boundary_data, W_cells, viscous_gradients), *mesh);
-        }
         const std::string file = toml::find_or<std::string>(input, "integrals", "file", "integrals.csv");
         integral_monitor.file = file;
         if (comm::is_root()) {
@@ -668,14 +661,27 @@ void Solver::init_output() {
             }
         }
     }
-    if (!input.contains("write_data")) {
-        return;
+    bind_outputs();
+    if (input.contains("write_data")) {
+        for (const auto & output : toml::find<std::vector<toml::value>>(input, "write_data")) {
+            data_writers.push_back(std::make_unique<DataWriter>());
+            data_writers.back()->init(output, data, mesh, restart_variables());
+        }
     }
-    std::vector<toml::value> outputs = toml::find<std::vector<toml::value>>(input, "write_data");
-    for (const auto & output : outputs) {
-        data_writers.push_back(std::make_unique<DataWriter>());
-        data_writers.back()->init(output, data, mesh, restart_variables());
+}
+
+void Solver::bind_outputs() {
+    for (ForceMonitor & monitor : force_monitors) {
+        FaceZone * zone = mesh->get_face_zone(monitor.zone);
+        std::vector<uint32_t> owned;
+        for (uint32_t i = 0; zone && i < zone->n_faces(); i++) {
+            const uint32_t f = zone->h_faces(i);
+            if (static_cast<uint32_t>(mesh->h_cells_of_face(f, 0)) < mesh->n_owned()) owned.push_back(f);
+        }
+        monitor.faces = Kokkos::View<uint32_t *>("force_faces", owned.size());
+        Kokkos::deep_copy(monitor.faces, Kokkos::View<const uint32_t *, Kokkos::HostSpace>(owned.data(), owned.size()));
     }
+    for (auto & writer : data_writers) writer->bind(data, mesh);
 }
 
 void Solver::allocate_memory() {
@@ -689,7 +695,7 @@ void Solver::allocate_memory() {
                                                               face_reconstruction->n_face_quadrature_points());
     face_flux = Kokkos::View<rtype *[N_CONSERVATIVE]>("face_flux", mesh->n_faces);
     cfl_local = Kokkos::View<rtype *>("cfl_local", mesh->n_cells);
-    if (physics.is_viscous()) {
+    if (physics.is_viscous() || input.contains("integrals")) {
         viscous_gradients = Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]>("viscous_gradients", mesh->n_cells);
         viscous_gradient = make_vertex_gradient(make_gradient(*mesh, boundary_data, W_cells, viscous_gradients), *mesh);
     }
