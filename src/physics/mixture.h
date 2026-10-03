@@ -139,7 +139,7 @@ class MixtureModel {
 /**
  * @brief Chemistry integrator options from the optional [chemistry] table:
  *        rtol, atol (on mass fractions), max_steps (sub-steps per call),
- *        sparse (the linear solver; by default sparse above 100 species).
+ *        sparse (the linear solver; automatic by default, see use_sparse_lu).
  */
 chemistry::ReactorOptions reactor_options(const toml::value & input);
 

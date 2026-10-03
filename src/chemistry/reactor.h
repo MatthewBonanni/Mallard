@@ -27,14 +27,22 @@ namespace chemistry {
 struct ReactorOptions {
     RosenbrockOptions integrator;
     double atol_Y = 1e-10;
-    int sparse = -1;  // linear solver: 0 dense LU, 1 sparse LU, -1 sparse above SPARSE_SPECIES species
-
-    static constexpr uint32_t SPARSE_SPECIES = 100;
-
-    bool use_sparse(const uint32_t n_species) const {
-        return sparse == 1 || (sparse < 0 && n_species > SPARSE_SPECIES);
-    }
+    int sparse = -1;  // linear solver: 0 dense LU, 1 sparse LU, -1 automatic (use_sparse_lu)
 };
+
+/**
+ * @brief Whether a mechanism's reactors use the sparse LU: as options.sparse
+ *        says, or automatically from 30 species when the factors of the
+ *        static pattern fill at most 60% of the dense matrix (GRI-3.0 53%:
+ *        sparse; on an A100 the sparse LU is 2.5x faster at 100 species).
+ */
+inline bool use_sparse_lu(const ReactorOptions & options, const Mechanism & mechanism) {
+    if (options.sparse >= 0) return options.sparse == 1;
+    const uint32_t n = static_cast<uint32_t>(mechanism.n_species()) + 1;
+    if (n < 31) return false;
+    const SparseLUPattern<Kokkos::HostSpace> pattern = make_sparse_lu_pattern<Kokkos::HostSpace>(mechanism);
+    return pattern.nnz <= 0.6 * static_cast<double>(n) * n;
+}
 
 /**
  * @brief Adiabatic, constant-volume reactor at density rho with state

@@ -289,7 +289,7 @@ void CellChemistry::init(const Mixture & gas_in, const chemistry::Mechanism & me
     }
     n_threads = n_lanes == 1 ? 1 : (options.threads > 0 ? options.threads : 1);
     if (n_lanes * n_threads > 32) throw std::invalid_argument("chemistry: at most 32 threads and lanes per cell.");
-    sparse = options.reactor.use_sparse(ns);
+    sparse = chemistry::use_sparse_lu(options.reactor, mechanism);
     if (sparse) pattern = chemistry::make_sparse_lu_pattern(mechanism);
     // Teams may keep the factors and the integrator's vectors in scratch memory where they fit; on the A100
     // this lowers the cells per SM more than it speeds each cell, so it is off unless asked for

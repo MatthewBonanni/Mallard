@@ -221,7 +221,7 @@ double precision in every build.
 | `max_steps` | Sub-steps allowed per cell and half step (default 100000); more stop the run |
 | `T_frozen` | No chemistry in cells below this temperature (default 0) |
 | `fuse_half_steps` | `false` applies both half steps in every step (default `true`) |
-| `sparse` | `true` for the sparse LU (static pattern, with the Jacobian's dense rank-one part by Sherman-Morrison), `false` for the dense one; default sparse above 100 species |
+| `sparse` | `true` for the sparse LU (static pattern, with the Jacobian's dense rank-one part by Sherman-Morrison), `false` for the dense one; by default sparse from 30 species when its factors fill at most 60% of the dense matrix (GRI-3.0 and larger) |
 | `lanes` | Vector lanes integrating one cell: 1 for one thread per cell (cells ordered by their last cost), a power of 2 up to 32 for a team per cell on GPUs; default 0, automatic: a warp per cell on GPUs from 16 species, else one thread |
 
 Cells whose mass fractions would change by less than `atol / 100` over the
