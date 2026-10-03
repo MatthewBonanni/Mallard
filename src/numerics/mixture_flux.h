@@ -114,6 +114,126 @@ struct MixtureFluxFunctor {
 };
 
 /**
+ * @brief Double-flux variant of MixtureFluxFunctor (Abgrall & Karni 2001;
+ *        Billet & Abgrall 2003; Ma, Lv & Ihme 2017): each cell's energy
+ *        update uses a flux computed with its own frozen [gamma, e0] on both
+ *        sides of the face, so pressure and velocity stay exactly uniform
+ *        across contacts between different gases. Mass and momentum use the
+ *        mean of the two sides' fluxes, which stays conservative and equals
+ *        both at such contacts. face_flux holds side 0's energy flux,
+ *        face_energy_1 side 1's (both as the rate of change of side 0).
+ */
+template <typename T_riemann_solver>
+struct MixtureDoubleFluxFunctor {
+    Kokkos::View<rtype *[N_DIM]> normals;
+    Kokkos::View<rtype *> face_area;
+    Kokkos::View<int32_t *[2]> cells_of_face;
+    Kokkos::View<rtype *> quad_weights;
+    Kokkos::View<rtype **> face_weights;
+    Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution;
+    BoundaryData boundaries;
+    Kokkos::View<rtype *[N_CONSERVATIVE]> W_cells;
+    Kokkos::View<rtype *[2]> frozen;  // (cell, [gamma, e0])
+    Kokkos::View<rtype **[2][2]> face_thermo;
+    Kokkos::View<rtype **, Kokkos::LayoutStride> cell_thermo;
+    Kokkos::View<rtype *[N_CONSERVATIVE]> face_flux;
+    Kokkos::View<rtype *> face_energy_1;
+    Kokkos::View<rtype **> face_mdot;
+    rtype low_mach_cutoff;
+
+    KOKKOS_INLINE_FUNCTION
+    void operator()(const uint32_t i_face) const {
+        constexpr uint8_t E = N_DIM + 1;
+        uint8_t n_quad;
+        if constexpr (N_DIM == 2) {
+            n_quad = static_cast<uint8_t>(quad_weights.extent(0));
+        } else {
+            n_quad = static_cast<uint8_t>(face_weights.extent(1));
+        }
+        const int32_t c0 = cells_of_face(i_face, 0);
+        const int32_t c1 = cells_of_face(i_face, 1);
+        const riemann::SideThermo th_0{frozen(c0, 0), frozen(c0, 1)};
+        const riemann::SideThermo th_1 = c1 >= 0 ? riemann::SideThermo{frozen(c1, 0), frozen(c1, 1)} : th_0;
+        rtype n_unit[N_DIM];
+        rtype n_vec[N_DIM];
+        FOR_I_DIM n_vec[i] = normals(i_face, i);
+        unit<N_DIM>(n_vec, n_unit);
+
+        rtype flux[N_CONSERVATIVE] = {};
+        rtype energy_1 = 0.0_r;
+        for (uint8_t i_quad = 0; i_quad < n_quad; i_quad++) {
+            rtype w_q;
+            if constexpr (N_DIM == 2) {
+                w_q = quad_weights(i_quad);
+            } else {
+                w_q = face_weights(i_face, i_quad);
+                if (w_q == 0.0_r) {
+                    face_mdot(i_face, i_quad) = 0.0_r;
+                    continue;
+                }
+            }
+            rtype W_l[N_CONSERVATIVE], W_r[N_CONSERVATIVE];
+            FOR_I_CONSERVATIVE W_l[i] = face_solution(i_face, i_quad, 0, i);
+            if (c1 >= 0) {
+                FOR_I_CONSERVATIVE W_r[i] = face_solution(i_face, i_quad, 1, i);
+                if (low_mach_cutoff < 1.0_r) low_mach_correction(W_l, W_r, th_0.gamma, th_1.gamma, low_mach_cutoff);
+            } else {
+                const rtype th_i[2] = {th_0.gamma, th_0.e0};
+                rtype th_g[2];
+                boundaries.exterior_mixture(i_face, i_quad, n_quad, W_l, th_i, n_unit, W_cells, face_solution,
+                                            face_thermo, cell_thermo, W_r, th_g);
+            }
+            rtype F_0[N_CONSERVATIVE], F_1[N_CONSERVATIVE];
+            T_riemann_solver::calc_flux(F_0, n_unit, W_l, W_r, th_0, th_0);
+            if (c1 >= 0) {
+                T_riemann_solver::calc_flux(F_1, n_unit, W_l, W_r, th_1, th_1);
+            } else {
+                FOR_I_CONSERVATIVE F_1[i] = F_0[i];
+            }
+            const rtype mdot = 0.5_r * (F_0[0] + F_1[0]);
+            face_mdot(i_face, i_quad) = mdot;
+            flux[0] += w_q * mdot;
+            FOR_I_DIM flux[1 + i] += w_q * 0.5_r * (F_0[1 + i] + F_1[1 + i]);
+            flux[E] += w_q * F_0[E];
+            energy_1 += w_q * F_1[E];
+        }
+
+        const rtype scale = 0.5_r * face_area(i_face);
+        FOR_I_CONSERVATIVE face_flux(i_face, i) = -scale * flux[i];
+        face_energy_1(i_face) = -scale * energy_1;
+    }
+};
+
+/**
+ * @brief FaceFluxSumFunctor for double flux: the energy of a face's side-1
+ *        cell comes from face_energy_1.
+ */
+struct DoubleFluxSumFunctor {
+    Kokkos::View<uint32_t *> offsets_faces_of_cell;
+    Kokkos::View<uint32_t *> faces_of_cell;
+    Kokkos::View<int32_t *[2]> cells_of_face;
+    Kokkos::View<rtype *[N_CONSERVATIVE]> face_flux;
+    Kokkos::View<rtype *> face_energy_1;
+    Kokkos::View<rtype *[N_CONSERVATIVE]> rhs;
+
+    KOKKOS_INLINE_FUNCTION
+    void operator()(const uint32_t i_cell) const {
+        constexpr uint8_t E = N_DIM + 1;
+        rtype sum[N_CONSERVATIVE] = {};
+        for (uint32_t k = offsets_faces_of_cell(i_cell); k < offsets_faces_of_cell(i_cell + 1); k++) {
+            const uint32_t i_face = faces_of_cell(k);
+            if (cells_of_face(i_face, 0) == static_cast<int32_t>(i_cell)) {
+                FOR_I_CONSERVATIVE sum[i] += face_flux(i_face, i);
+            } else {
+                for (uint8_t i = 0; i < E; i++) sum[i] -= face_flux(i_face, i);
+                sum[E] -= face_energy_1(i_face);
+            }
+        }
+        FOR_I_CONSERVATIVE rhs(i_cell, i) = sum[i];
+    }
+};
+
+/**
  * @brief Species fluxes by mass-flux upwinding (Larrouturou 1991),
  *        F_k = max(mdot, 0) Y_k^L + min(mdot, 0) Y_k^R, split by the side
  *        each part comes from: each cell writes, for each of its faces, the

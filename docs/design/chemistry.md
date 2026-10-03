@@ -1,7 +1,7 @@
 # Design: finite-rate chemistry
 
 Status: accepted (see [Decisions on the open questions](#decisions-on-the-open-questions)).
-Implementation follows the [milestones](#10-milestones); done: 1, 2, 3, 4.
+Implementation follows the [milestones](#10-milestones); done: 1, 2, 3, 4, 5.
 
 Mallard today solves a single calorically perfect gas. This document adds
 multicomponent, thermally perfect mixtures and finite-rate chemistry with
@@ -320,6 +320,21 @@ accumulation gets a second slot for the energy flux. It is milestone 5, enabled 
 right after the conservative scheme and the interface test that measures the
 oscillations. A TENO/double-flux scheme on unstructured meshes appears not to
 have been published, so this is also where Mallard would be new.
+
+As implemented (milestone 5, `[numerics] double_flux = true`): `(gamma, e0)`
+are frozen per cell once per time step, from the true equation of state at the
+step's start (the temperature seed's only update in this mode, so its history
+stays rank independent), and every stage takes the cells' pressure from the
+frozen relation. Each face point computes the Riemann flux twice, with each
+side's frozen `(gamma, e0)` on both of its states; mass and momentum use the
+mean of the two (conservative, and equal to both at a contact, where HLLC
+returns the upwind physical flux), so `mdot` and the species fluxes stay
+unique, and each side takes its own energy flux (one extra word per face).
+After the step `rho E` is reset to the true equation of state at the pressure
+of the frozen one. There is no shock switch yet: the energy error over the
+multicomponent shock tube is 0.16% of the total energy, with an L1 pressure
+error equal to the conservative scheme's; contacts keep `p` and `u` uniform to
+1e-12 with MUSCL and TENO5.
 
 ### Species fluxes without races
 
