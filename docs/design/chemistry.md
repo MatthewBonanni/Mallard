@@ -152,9 +152,11 @@ struct Mixture {                       // POD of Views, captured by value in ker
 `e(T, Y) = sum_k Y_k e_k(T)` is monotone (`cv > 0`), so Newton on `T` with
 `de/dT = cv` converges in 1 to 3 iterations from the previous value of `T`,
 which is cached per cell (it is the `T` column of `primitives`). The iteration
-is safeguarded by a bracket `[T_min, T_max]` (from the thermo ranges) with a
-bisection fallback, and stops at `|dT| < 1e-10 T` (double) or `1e-5 T`
-(float). Newton is needed once per cell per RK stage and at the start and end
+is safeguarded by a bracket (half the highest lower bound to twice the lowest
+upper bound of the species' fits: the common fitted range, with some
+extrapolation) with a bisection fallback, and stops at `|dT| < 1e-10 T`. The
+thermodynamics are in double precision in every build (decision 7), so float
+builds use the same tolerance. Newton is needed once per cell per RK stage and at the start and end
 of each chemistry step (which carries `T` as an unknown, section 4); face
 states never need it (section 3).
 
@@ -813,9 +815,11 @@ the mechanism file used by the run, and committed as small CSV files with the
 Cantera version recorded, so the tests themselves need no Cantera. Same
 mechanism, same thermo and transport, so differences are Mallard's numerics.
 
-Mechanisms used throughout: H2/O2 of
-[Burke et al. 2012](https://doi.org/10.1002/kin.20603) (13 species with Ar,
-He, N2), GRI-Mech 3.0 (53 species, 325 reactions;
+Mechanisms used throughout: the H2/O2 submechanism of GRI-Mech 3.0 with Ar
+and N2 (`mechanisms/h2o2.yaml`, 10 species, 29 reactions, from Cantera's
+data; it stands in for [Burke et al. 2012](https://doi.org/10.1002/kin.20603),
+whose file Cantera does not ship, and can be swapped for it without code
+changes), GRI-Mech 3.0 (53 species, 325 reactions;
 [source](http://combustion.berkeley.edu/gri-mech/version30/text30.html), ships
 with Cantera), and for performance a ~100-species skeletal mechanism (e.g.
 HyChem Jet-A, [Wang et al. 2018](https://doi.org/10.1016/j.combustflame.2018.07.012))

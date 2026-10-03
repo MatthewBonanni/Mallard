@@ -11,6 +11,9 @@ add_library(MallardCore STATIC
     mesh/mesh_block.cpp
     mesh/zone.cpp
     boundary/boundary.cpp
+    chemistry/mechanism.cpp
+    chemistry/thermo.cpp
+    chemistry/units.cpp
     numerics/face_reconstruction.cpp
     numerics/quadrature.cpp
     numerics/teno.cpp
@@ -32,6 +35,7 @@ target_include_directories(MallardCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/common
     ${CMAKE_CURRENT_SOURCE_DIR}/mesh
     ${CMAKE_CURRENT_SOURCE_DIR}/boundary
+    ${CMAKE_CURRENT_SOURCE_DIR}/chemistry
     ${CMAKE_CURRENT_SOURCE_DIR}/numerics
     ${CMAKE_CURRENT_SOURCE_DIR}/physics
     ${CMAKE_CURRENT_SOURCE_DIR}/solver
@@ -39,6 +43,7 @@ target_include_directories(MallardCore PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/parallel
 )
 target_link_libraries(MallardCore PUBLIC Kokkos::kokkos)
+target_link_libraries(MallardCore PRIVATE yaml-cpp::yaml-cpp)
 mallard_target_warnings(MallardCore)
 
 configure_file(common/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/version.h @ONLY)
