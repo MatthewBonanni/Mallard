@@ -282,6 +282,7 @@ class TENO : public FaceReconstruction {
 
         // Per-cell precomputed data, for the reconstructed cells [0, n_reconstructed)
         Kokkos::View<rtype *> scale;                       // h = sqrt(V)
+        Kokkos::View<rtype *[9]> frame;                    // 3D metric basis map (experiment); empty: 1 / h
         Kokkos::View<rtype **> basis_mean;                 // (cell, l): mean of phi_l over the cell
         Kokkos::View<uint16_t *> stencil_large_size;       // (cell)
         teno::PackedStencils stencil_large;                // pseudo-inverse width: nk
