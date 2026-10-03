@@ -178,10 +178,11 @@ void DistributedMesh::match_periodic(const std::vector<Mesh::PeriodicPair> & pai
             if (d2 > 0.0_r) h = std::min(h, std::sqrt(d2));
         }
     }
-    std::vector<double> h(min_edge.begin(), min_edge.end());
+    std::vector<double> h(n_pairs);
+    for (size_t k = 0; k < n_pairs; k++) h[k] = static_cast<double>(min_edge[k]);
     comm::allreduce(std::span<double>(h), comm::Op::MIN);
     std::vector<PeriodicGrid> grids;
-    for (size_t k = 0; k < n_pairs; k++) grids.emplace_back(rtype(h[k]));
+    for (size_t k = 0; k < n_pairs; k++) grids.emplace_back(static_cast<rtype>(h[k]));
 
     // Each node of zone_a, translated, goes to the rank its grid cell hashes
     // to; each node of zone_b to the ranks of every cell around its own, so
