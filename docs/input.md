@@ -80,15 +80,28 @@ count, Gmsh/VTK node order), `/boundary/offsets`, `/boundary/nodes` and
 
 ## `[[periodic]]`
 
-Pairs two boundary zones of any mesh (e.g. Gmsh physical curves or surfaces)
-into a periodic seam: zone B must be zone A translated, node by node (to 1e-6
-of the zones' shortest edge). The faces of both zones become interior faces and
-take no `[[boundaries]]` entry.
+Pairs two boundary zones of any mesh (e.g. Gmsh physical curves or surfaces,
+or zones of an HDF5 mesh) into a periodic seam, serially and in distributed
+runs: zone B must be zone A translated, node by node (to 1e-6 of the zones'
+shortest edge), as Gmsh's `Periodic` constraint produces. The faces of both
+zones become interior faces and take no `[[boundaries]]` entry. A node with no
+match is reported with its coordinates. Each zone joins at most one pair, and
+as for generated meshes, each periodic direction needs at least 3 cells.
 
 | Key | Description |
 |---|---|
 | `zones` | `[A, B]`: the zone names |
 | `translation` | `[t_x, t_y]` (`[t_x, t_y, t_z]` in 3D) with B = A + translation |
+
+```toml
+[mesh]
+type = "file"
+filename = "box.msh"
+
+[[periodic]]
+zones = ["left", "right"]
+translation = [1.0, 0.0]
+```
 
 ## `[physics]`
 

@@ -86,8 +86,8 @@ std::vector<Mesh::PeriodicPair> Mesh::periodic_pairs(const toml::value & input) 
             const auto zones = toml::find<std::vector<std::string>>(entry, "zones");
             const std::vector<rtype> t = find_real_vector(entry, "translation");
             if (zones.size() != 2 || t.size() != N_DIM) {
-                throw std::runtime_error("[[periodic]] needs zones = [A, B] and a translation with " +
-                                         std::to_string(N_DIM) + " components.");
+                throw InputError("[[periodic]] needs zones = [A, B] and a translation with " +
+                                 std::to_string(N_DIM) + " components.");
             }
             PeriodicPair pair{zones[0], zones[1], {}};
             FOR_I_DIM pair.translation[i] = t[i];
@@ -96,8 +96,8 @@ std::vector<Mesh::PeriodicPair> Mesh::periodic_pairs(const toml::value & input) 
     }
     if (!input.contains("mesh") || !input.at("mesh").contains("periodic")) return pairs;
     if (toml::find_or<std::string>(input, "mesh", "type", "file") == "file") {
-        throw std::runtime_error("[mesh] periodic applies to generated meshes; pair the zones of a mesh file "
-                                 "with [[periodic]].");
+        throw InputError("[mesh] periodic applies to generated meshes; pair the zones of a mesh file with "
+                         "[[periodic]].");
     }
     const rtype L[3] = {find_real_or(input, "mesh", "Lx", 1.0), find_real_or(input, "mesh", "Ly", 1.0),
                         find_real_or(input, "mesh", "Lz", 1.0)};
