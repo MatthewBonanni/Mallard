@@ -54,6 +54,20 @@ constexpr uint16_t upper_index(const uint8_t l, const uint8_t m, const uint8_t n
 constexpr uint8_t SLICE_SHIFT =
     Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, Kokkos::HostSpace>::accessible ? 0 : 5;
 
+/**
+ * @brief Load of read-only device data through a pointer that was itself
+ *        loaded from memory: the compiler cannot tell it points to global
+ *        memory, and generic loads made the reconstruction about 10% slower.
+ */
+template <typename T>
+KOKKOS_INLINE_FUNCTION T load_read_only(const T * p) {
+#if defined(__CUDA_ARCH__) || defined(__HIP_DEVICE_COMPILE__)
+    return __ldg(p);
+#else
+    return *p;
+#endif
+}
+
 /** @brief log2 of the cells per separately allocated chunk of PackedStencils. */
 constexpr uint8_t CHUNK_SHIFT = 13;
 
@@ -85,15 +99,15 @@ struct PackedStencils {
         uint8_t shift;
 
         KOKKOS_INLINE_FUNCTION
-        int32_t cell(const uint32_t s) const { return cells_[s << shift]; }
+        int32_t cell(const uint32_t s) const { return load_read_only(cells_ + (s << shift)); }
 
         KOKKOS_INLINE_FUNCTION
-        int32_t face(const uint32_t s) const { return faces_[s << shift]; }
+        int32_t face(const uint32_t s) const { return load_read_only(faces_ + (s << shift)); }
 
         /** @brief Entry l of slot s, for pseudo-inverses of WIDTH entries per slot. */
         template <uint8_t WIDTH>
         KOKKOS_INLINE_FUNCTION
-        rtype pinv(const uint32_t s, const uint32_t l) const { return pinv_[(s * WIDTH + l) << shift]; }
+        rtype pinv(const uint32_t s, const uint32_t l) const { return load_read_only(pinv_ + ((s * WIDTH + l) << shift)); }
     };
 
     KOKKOS_INLINE_FUNCTION
