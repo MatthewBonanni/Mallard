@@ -827,6 +827,7 @@ void Solver::copy_device_to_host() {
         if (reacting) {
             update_heat_release_rate();
             Kokkos::deep_copy(h_hrr, hrr);
+            Kokkos::deep_copy(h_production, production);
             Kokkos::deep_copy(h_chem_h, chem_h);
             Kokkos::deep_copy(h_chem_cost, chem_cost);
         }
@@ -858,7 +859,7 @@ void Solver::register_data() {
         data.push_back(Data("RHOY_" + species_names[k], Kokkos::subview(h_species, Kokkos::ALL(), k)));
     }
     if (is_mixture()) {
-        data.reserve(data.size() + 3 * species_names.size() + 6 + PRIMITIVE_NAMES.size() + 2);
+        data.reserve(data.size() + 4 * species_names.size() + 6 + PRIMITIVE_NAMES.size() + 2);
         for (size_t k = 0; k < species_names.size(); k++) {
             data.push_back(Data("Y_" + species_names[k], Kokkos::subview(h_Y, Kokkos::ALL(), k)));
             data.push_back(Data("X_" + species_names[k], Kokkos::subview(h_X, Kokkos::ALL(), k)));
@@ -875,6 +876,9 @@ void Solver::register_data() {
             data.push_back(Data("CHEM_H", h_chem_h));
             data.push_back(Data("CHEM_COST", h_chem_cost));
             data.push_back(Data("HRR", h_hrr));
+            for (size_t k = 0; k < species_names.size(); k++) {
+                data.push_back(Data("OMEGA_" + species_names[k], Kokkos::subview(h_production, Kokkos::ALL(), k)));
+            }
         }
     }
     for (size_t i = 0; i < PRIMITIVE_NAMES.size(); i++) {

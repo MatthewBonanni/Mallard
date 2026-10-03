@@ -384,6 +384,8 @@ class Solver {
         Kokkos::View<rtype *>::host_mirror_type h_chem_cost;
         Kokkos::View<rtype *> hrr;        // heat release rate, for output
         Kokkos::View<rtype *>::host_mirror_type h_hrr;
+        Kokkos::View<rtype **, Kokkos::LayoutRight> production;  // W_k omega_k, for output
+        Kokkos::View<rtype **, Kokkos::LayoutRight>::host_mirror_type h_production;
         Kokkos::View<double **, Kokkos::LayoutRight> chem_work;     // (cell of a chunk, work)
         Kokkos::View<uint32_t **, Kokkos::LayoutRight> chem_pivot;
         Kokkos::View<uint32_t *> chem_active, chem_queue;
