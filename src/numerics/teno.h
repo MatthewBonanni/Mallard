@@ -83,7 +83,6 @@ struct PackedStencils {
         const int32_t * cells_;
         const int32_t * faces_;
         uint8_t shift;
-        uint8_t width;
 
         KOKKOS_INLINE_FUNCTION
         int32_t cell(const uint32_t s) const { return cells_[s << shift]; }
@@ -91,8 +90,10 @@ struct PackedStencils {
         KOKKOS_INLINE_FUNCTION
         int32_t face(const uint32_t s) const { return faces_[s << shift]; }
 
+        /** @brief Entry l of slot s, for pseudo-inverses of WIDTH entries per slot. */
+        template <uint8_t WIDTH>
         KOKKOS_INLINE_FUNCTION
-        rtype pinv(const uint32_t s, const uint32_t l) const { return pinv_[(s * width + l) << shift]; }
+        rtype pinv(const uint32_t s, const uint32_t l) const { return pinv_[(s * WIDTH + l) << shift]; }
     };
 
     KOKKOS_INLINE_FUNCTION
@@ -101,7 +102,7 @@ struct PackedStencils {
         const uint32_t start = slice_start(c >> shift);
         const uint32_t lane = c & ((1u << shift) - 1);
         return Row{chunk.pinv + ((size_t(start) * width) << shift) + lane, chunk.cells + (size_t(start) << shift) + lane,
-                   chunk.faces + (size_t(start) << shift) + lane, shift, width};
+                   chunk.faces + (size_t(start) << shift) + lane, shift};
     }
 };
 

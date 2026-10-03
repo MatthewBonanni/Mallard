@@ -1560,7 +1560,7 @@ struct TENOFunctor {
             rtype U[N_CONSERVATIVE];
             entry_conservatives(stencil.cell(s), stencil.face(s), U);
             FOR_I_DIM {
-                const rtype P = stencil.pinv(s, i) * inv_h;
+                const rtype P = stencil.pinv<NK>(s, i) * inv_h;
                 for (uint8_t v = 0; v < N_CONSERVATIVE; v++) dU[v][i] += P * (U[v] - U0[v]);
             }
         }
@@ -1600,7 +1600,7 @@ struct TENOFunctor {
             g_mean += delta / (s + 1);
             g_m2 += delta * (g - g_mean);
             for (uint8_t l = 0; l < NK; l++) {
-                const rtype P = stencil.pinv(s, l);
+                const rtype P = stencil.pinv<NK>(s, l);
                 FOR_I_CONSERVATIVE aK[l][i] += P * (U[i] - U0[i]);
             }
         }
@@ -1698,7 +1698,7 @@ struct TENOFunctor {
                 rtype U[N_CONSERVATIVE];
                 entry_conservatives(stencil.cell(start + e), stencil.face(start + e), U);
                 for (uint8_t l = 0; l < teno::NK_SMALL; l++) {
-                    const rtype P = stencil.pinv(start + e, l);
+                    const rtype P = stencil.pinv<teno::NK_SMALL>(start + e, l);
                     FOR_I_CONSERVATIVE aS[s][l][i] += P * (U[i] - U0[i]);
                 }
             }
