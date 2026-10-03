@@ -28,8 +28,8 @@
  * @brief Options of CellChemistry: the reactor's tolerances, the temperature
  *        below which cells are frozen, the vector lanes and threads of the
  *        team of each cell (0: automatic; lanes = 1: one thread per cell),
- *        whether a team keeps its work memory in scratch (shared) memory
- *        where it fits (-1 automatic, 0 never, 1 where it fits), and whether
+ *        whether a team keeps its factors and vectors in scratch (shared)
+ *        memory where they fit (1; default no), and whether
  *        cells integrated by one thread are ordered by their last cost
  *        (binning).
  */
@@ -38,7 +38,7 @@ struct CellChemistryOptions {
     double T_frozen = 0.0;
     uint32_t lanes = 0;
     uint32_t threads = 0;
-    int shared = -1;
+    int shared = 0;
     bool bin_by_cost = true;
 };
 

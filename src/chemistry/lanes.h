@@ -38,6 +38,7 @@ KOKKOS_INLINE_FUNCTION constexpr uint32_t dense_index(const uint32_t n, const ui
 struct SerialLanes {
     static constexpr uint32_t lanes = 1;
     static constexpr bool column_major = false;  // dense matrices: rows contiguous for one thread's inner loops
+    static constexpr bool parallel = false;      // loops that balance work across lanes are not worth it
 
     template <typename F>
     KOKKOS_INLINE_FUNCTION void for_each(const uint32_t n, const F & f) const {
@@ -87,6 +88,7 @@ struct SerialLanes {
 template <typename Member>
 struct TeamLanes {
     static constexpr bool column_major = true;  // dense matrices: a column's rows contiguous across lanes
+    static constexpr bool parallel = true;      // balance work across lanes (e.g. Jacobian entries, not rows)
     const Member & member;
     uint32_t lanes;
     double * partial;    // (lanes)

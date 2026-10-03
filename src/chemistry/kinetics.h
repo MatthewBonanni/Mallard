@@ -91,6 +91,13 @@ struct KineticsTable {
     View1<uint32_t> species_offset;  // (n_species + 1): the same coefficients by species, by reaction index
     View1<uint32_t> species_reaction;
     View1<double> species_nu;
+    View1<uint32_t> chunk_offset;  // (n_species + 1): chunks of each species' coefficients, for lanes
+    View1<uint32_t> chunk_end;     // (chunk): end of its range in the species' coefficients
+    // Jacobian entries d omega_k / d C_j with their terms (per-reaction derivative and coefficient), for lanes
+    View1<uint32_t> entry_row, entry_column;
+    View1<uint32_t> entry_offset;  // (entries + 1)
+    View1<uint32_t> term_source;   // index into the ReactionDerivatives block
+    View1<double> term_coefficient;
     View1<double> delta_nu;          // sum of net coefficients
     View1<uint32_t> efficiency_offset;
     View1<uint32_t> efficiency_species;
@@ -388,7 +395,27 @@ struct KineticsTable {
      *        sums of any per-reaction quantity, e.g. dq_dT).
      */
     template <typename Lanes>
-    KOKKOS_INLINE_FUNCTION void production_rates(const Lanes & lanes, const double * q, double * omega) const {
+    KOKKOS_INLINE_FUNCTION void production_rates(const Lanes & lanes, const double * q, double * omega,
+                                                 double * partial = nullptr) const {
+        if constexpr (Lanes::parallel) {
+            if (partial) {
+                // Chunks of a few reactions per lane, then each species' chunks in order
+                lanes.for_each(static_cast<uint32_t>(chunk_end.extent(0)), [&](const uint32_t c) {
+                    const uint32_t begin = c == 0 ? 0 : chunk_end(c - 1);
+                    double sum = 0.0;
+                    for (uint32_t e = begin; e < chunk_end(c); e++) sum += species_nu(e) * q[species_reaction(e)];
+                    partial[c] = sum;
+                });
+                lanes.sync();
+                lanes.for_each(n_species, [&](const uint32_t k) {
+                    double sum = 0.0;
+                    for (uint32_t c = chunk_offset(k); c < chunk_offset(k + 1); c++) sum += partial[c];
+                    omega[k] = sum;
+                });
+                lanes.sync();
+                return;
+            }
+        }
         lanes.for_each(n_species, [&](const uint32_t k) {
             double sum = 0.0;
             for (uint32_t e = species_offset(k); e < species_offset(k + 1); e++) {
@@ -417,6 +444,31 @@ struct KineticsTable {
                                                     const uint32_t stride, double * all_columns = nullptr) const {
         const uint32_t n = n_species;
         constexpr bool CM = Lanes::column_major;
+        if constexpr (Lanes::parallel) {
+            // Rows start from the part shared by all columns; then each lane adds whole entries, so
+            // that the lanes' loads balance (a row's reactions do not)
+            lanes.for_each(n, [&](const uint32_t k) {
+                double uniform = 0.0;
+                for (uint32_t e = species_offset(k); e < species_offset(k + 1); e++) {
+                    const uint32_t i = species_reaction(e);
+                    uniform += species_nu(e) * (d.dq_dM[i] * default_efficiency(i) + d.dq_uniform[i]);
+                }
+                if (all_columns) all_columns[k] = uniform;
+                const double base = all_columns ? 0.0 : uniform;
+                for (uint32_t j = 0; j < n; j++) J[dense_index<CM>(stride, k, j)] = base;
+            });
+            lanes.sync();
+            const double * block = d.dq_dT;
+            lanes.for_each(static_cast<uint32_t>(entry_row.extent(0)), [&](const uint32_t e) {
+                double sum = 0.0;
+                for (uint32_t t = entry_offset(e); t < entry_offset(e + 1); t++) {
+                    sum += term_coefficient(t) * block[term_source(t)];
+                }
+                J[dense_index<CM>(stride, entry_row(e), entry_column(e))] += sum;
+            });
+            lanes.sync();
+            return;
+        }
         lanes.for_each(n, [&](const uint32_t k) {
             auto row = [&](const uint32_t j) -> double & { return J[dense_index<CM>(stride, k, j)]; };
             for (uint32_t j = 0; j < n; j++) row(j) = 0.0;
@@ -566,6 +618,58 @@ KineticsTable<MemorySpace> make_kinetics_table(const Mechanism & mechanism) {
             s_re[fill[n_sp[j]]] = i;
             s_nu[fill[n_sp[j]]++] = n_nu[j];
         }
+    }
+    // Chunks of at most 4 coefficients of each species
+    {
+        std::vector<uint32_t> offsets{0}, ends;
+        for (uint32_t k = 0; k < t.n_species; k++) {
+            for (uint32_t e = s_off[k]; e < s_off[k + 1]; e += 4) ends.push_back(std::min(e + 4, s_off[k + 1]));
+            offsets.push_back(static_cast<uint32_t>(ends.size()));
+        }
+        t.chunk_offset = copy(offsets, "kinetics_chunk_offset");
+        t.chunk_end = copy(ends, "kinetics_chunk_end");
+    }
+    // Jacobian entries and their terms, in the order of production_jacobian's row loops
+    {
+        const uint32_t nf = static_cast<uint32_t>(f_sp.size()), nrv = static_cast<uint32_t>(r_sp.size());
+        const uint32_t off_forward = nr, off_reverse = nr + nf, off_dM = nr + nf + nrv;
+        std::vector<std::vector<std::pair<uint32_t, double>>> terms(static_cast<size_t>(t.n_species) * t.n_species);
+        for (uint32_t k = 0; k < t.n_species; k++) {
+            for (uint32_t e = s_off[k]; e < s_off[k + 1]; e++) {
+                const uint32_t i = s_re[e];
+                const double nu = s_nu[e];
+                auto & row = terms;
+                for (uint32_t a = f_off[i]; a < f_off[i + 1]; a++) {
+                    row[k * t.n_species + f_sp[a]].emplace_back(off_forward + a, nu);
+                }
+                for (uint32_t a = r_off[i]; a < r_off[i + 1]; a++) {
+                    row[k * t.n_species + r_sp[a]].emplace_back(off_reverse + a, -nu);
+                }
+                for (uint32_t x = e_off[i]; x < e_off[i + 1]; x++) {
+                    row[k * t.n_species + e_sp[x]].emplace_back(off_dM + i, nu * e_extra[x]);
+                }
+            }
+        }
+        std::vector<uint32_t> rows, columns, offsets{0}, sources;
+        std::vector<double> coefficients;
+        for (uint32_t k = 0; k < t.n_species; k++) {
+            for (uint32_t j = 0; j < t.n_species; j++) {
+                const auto & list = terms[k * t.n_species + j];
+                if (list.empty()) continue;
+                rows.push_back(k);
+                columns.push_back(j);
+                for (const auto & [source, coefficient] : list) {
+                    sources.push_back(source);
+                    coefficients.push_back(coefficient);
+                }
+                offsets.push_back(static_cast<uint32_t>(sources.size()));
+            }
+        }
+        t.entry_row = copy(rows, "kinetics_entry_row");
+        t.entry_column = copy(columns, "kinetics_entry_column");
+        t.entry_offset = copy(offsets, "kinetics_entry_offset");
+        t.term_source = copy(sources, "kinetics_term_source");
+        t.term_coefficient = copy(coefficients, "kinetics_term_coefficient");
     }
     t.species_offset = copy(s_off, "kinetics_species_offset");
     t.species_reaction = copy(s_re, "kinetics_species_reaction");

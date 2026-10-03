@@ -54,7 +54,8 @@ struct ConstantVolumeReactor {
 
     KOKKOS_INLINE_FUNCTION
     static uint32_t scratch_size(const KineticsTable<MemorySpace> & kinetics) {
-        return 6 * kinetics.n_species + kinetics.n_reactions + kinetics.derivatives_size();
+        return 6 * kinetics.n_species + kinetics.n_reactions + kinetics.derivatives_size() +
+               static_cast<uint32_t>(kinetics.chunk_end.extent(0));
     }
 
     KOKKOS_INLINE_FUNCTION uint32_t size() const { return thermo.n_species + 1; }
@@ -96,6 +97,7 @@ struct ConstantVolumeReactor {
         const ReactionDerivatives d =
             ReactionDerivatives::at(q + nr, nr, static_cast<uint32_t>(kinetics.forward_species.extent(0)),
                                     static_cast<uint32_t>(kinetics.reverse_species.extent(0)));
+        double * partial = q + nr + kinetics.derivatives_size();
 
         const double T = y[ns];
         const auto p = ThermoTable<MemorySpace>::powers(T);
@@ -110,7 +112,7 @@ struct ConstantVolumeReactor {
             GAS_CONSTANT * lanes.sum(ns, [&](const uint32_t k) { return y[k] * thermo.inv_W(k) * (cp_R[k] - 1.0); });
         const double C_total = lanes.sum(ns, [&](const uint32_t k) { return C[k]; });
         kinetics.rates_of_progress(lanes, T, C, C_total, g_RT, h_RT, q, J ? &d : nullptr);
-        kinetics.production_rates(lanes, q, omega);
+        kinetics.production_rates(lanes, q, omega, partial);
         // u_k = R T (h_k / RT - 1)
         lanes.for_each(ns, [&](const uint32_t k) { f[k] = omega[k] / (rho * thermo.inv_W(k)); });
         const double sum_u_omega =
@@ -121,7 +123,7 @@ struct ConstantVolumeReactor {
         lanes.sync();
         if (!J) return;
 
-        kinetics.production_rates(lanes, d.dq_dT, domega_dT);
+        kinetics.production_rates(lanes, d.dq_dT, domega_dT, partial);
         kinetics.production_jacobian(lanes, d, J, n, rank_one);
         // With the rank-one part apart, its share of the T row: sum_k u_k a_k
         const double sum_a =
@@ -159,14 +161,15 @@ struct ConstantVolumeReactor {
 
 /**
  * @brief Doubles of the part of advance_reactor()'s work memory that can be
- *        in fast (team scratch) memory: all but the Jacobian.
+ *        in fast (team scratch) memory: the state, the factors and the
+ *        integrator's vectors, the most used in the factorization and solves.
  */
 template <typename MemorySpace>
 KOKKOS_INLINE_FUNCTION uint32_t reactor_fast_size(const KineticsTable<MemorySpace> & kinetics,
                                                   const SparseLUPattern<MemorySpace> * sparse = nullptr) {
     const uint32_t n = kinetics.n_species + 1;
     const uint32_t solver = sparse ? sparse->work_size() + 1 : n * n;
-    return n + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics) + solver + rosenbrock_vectors_size(n);
+    return n + solver + rosenbrock_vectors_size(n);
 }
 
 /**
@@ -177,7 +180,7 @@ template <typename MemorySpace>
 KOKKOS_INLINE_FUNCTION uint32_t reactor_work_size(const KineticsTable<MemorySpace> & kinetics,
                                                   const SparseLUPattern<MemorySpace> * sparse = nullptr) {
     const uint32_t n = kinetics.n_species + 1;
-    return n * n + reactor_fast_size(kinetics, sparse);
+    return n * n + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics) + reactor_fast_size(kinetics, sparse);
 }
 
 /**
@@ -187,8 +190,8 @@ KOKKOS_INLINE_FUNCTION uint32_t reactor_work_size(const KineticsTable<MemorySpac
  *        initial mass fractions are clipped the same way before integrating.
  * @param Y Mass fractions (n_species), T temperature: updated in place.
  * @param h Sub-step size: first guess in, proposal for the next call out.
- * @param work reactor_work_size(kinetics, sparse) doubles, or with fast the
- *        n * n doubles of the Jacobian only.
+ * @param work reactor_work_size(kinetics, sparse) doubles (with fast, only the
+ *        Jacobian and the reactor's scratch are used).
  * @param pivot n_species + 1 integers (dense LU).
  * @param sparse The pattern of the sparse LU (Sparse = true; else unused).
  * @param fast Null, or reactor_fast_size(kinetics, sparse) doubles of faster
@@ -204,9 +207,9 @@ KOKKOS_INLINE_FUNCTION RosenbrockResult advance_reactor(const Lanes & lanes, con
                                                         double * fast = nullptr) {
     const uint32_t ns = thermo.n_species, n = ns + 1;
     double * J = work;
-    double * y = fast ? fast : work + n * n;
-    double * scratch = y + n;
-    double * solver_work = scratch + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics);
+    double * scratch = J + n * n;
+    double * y = fast ? fast : scratch + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics);
+    double * solver_work = y + n;
     double * vectors = solver_work + (Sparse ? sparse->work_size() + 1 : n * n);
     // Scalar code runs on every lane with the same values; writes go through for_each or single
     double e, cv;
