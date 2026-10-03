@@ -54,13 +54,9 @@ struct TENOScalarValues {
     Kokkos::View<rtype *> scale;
     Kokkos::View<rtype **> basis_mean;
     Kokkos::View<uint16_t *> stencil_large_size;
-    Kokkos::View<int32_t **> stencil_large;
-    Kokkos::View<int32_t **> stencil_large_face;
-    Kokkos::View<rtype ***> pinv_large;
+    teno::PackedStencils stencil_large;
     Kokkos::View<uint16_t **> stencil_small_size;
-    Kokkos::View<int32_t ***> stencil_small;
-    Kokkos::View<int32_t ***> stencil_small_face;
-    Kokkos::View<rtype ****> pinv_small;
+    teno::PackedStencils stencil_small;
     Kokkos::View<rtype *> sigma;
     Kokkos::View<uint8_t **> selection;
     rtype sigma_threshold;
@@ -122,9 +118,10 @@ struct TENOScalarValues {
     void large_coefficients(const uint32_t c, const uint32_t j, rtype * a) const {
         const rtype S_c = scalars(c, j);
         for (uint8_t l = 0; l < NK; l++) a[l] = 0.0_r;
+        const teno::PackedStencils::Row stencil = stencil_large.row(c);
         for (uint16_t s = 0; s < stencil_large_size(c); s++) {
-            const rtype d = entry_value(stencil_large(c, s), stencil_large_face(c, s), j) - S_c;
-            for (uint8_t l = 0; l < NK; l++) a[l] += pinv_large(c, l, s) * d;
+            const rtype d = entry_value(stencil.cell(s), stencil.face(s), j) - S_c;
+            for (uint8_t l = 0; l < NK; l++) a[l] += stencil.pinv<NK>(s, l) * d;
         }
     }
 
@@ -132,9 +129,13 @@ struct TENOScalarValues {
     void sector_coefficients(const uint32_t c, const uint8_t s, const uint32_t j, rtype * a) const {
         const rtype S_c = scalars(c, j);
         for (uint8_t l = 0; l < teno::NK_SMALL; l++) a[l] = 0.0_r;
+        // The cell's sector stencils are stored one after another
+        uint16_t start = 0;
+        for (uint8_t t = 0; t < s; t++) start += stencil_small_size(c, t);
+        const teno::PackedStencils::Row stencil = stencil_small.row(c);
         for (uint16_t e = 0; e < stencil_small_size(c, s); e++) {
-            const rtype d = entry_value(stencil_small(c, s, e), stencil_small_face(c, s, e), j) - S_c;
-            for (uint8_t l = 0; l < teno::NK_SMALL; l++) a[l] += pinv_small(c, s, l, e) * d;
+            const rtype d = entry_value(stencil.cell(start + e), stencil.face(start + e), j) - S_c;
+            for (uint8_t l = 0; l < teno::NK_SMALL; l++) a[l] += stencil.pinv<teno::NK_SMALL>(start + e, l) * d;
         }
     }
 
@@ -220,8 +221,7 @@ TENOScalarValues<DEG> make_teno_scalar_values(const TENO & teno, const Mesh & me
                                  mesh.cell_coords, mesh.face_coords, mesh.shifts, mesh.face_shift,
                                  teno.quadrature_face.points, teno.face_quad_points, teno.face_quad_weights,
                                  teno.scale, teno.basis_mean, teno.stencil_large_size, teno.stencil_large,
-                                 teno.stencil_large_face, teno.pinv_large, teno.stencil_small_size,
-                                 teno.stencil_small, teno.stencil_small_face, teno.pinv_small, teno.troubled,
+                                 teno.stencil_small_size, teno.stencil_small, teno.troubled,
                                  teno.selection, teno.sigma_threshold, boundaries, scalars, theta, n_species};
 }
 
