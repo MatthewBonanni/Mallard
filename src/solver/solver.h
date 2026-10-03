@@ -29,11 +29,14 @@
 #include "data_writer.h"
 #include "expression.h"
 #include "comm.h"
+#include "distributed_mesh.h"
 #include "distribution.h"
 #include "halo_exchange.h"
+#include "log.h"
 
 struct ForceMonitor {
     std::string zone;
+    std::string file;
     Kokkos::View<uint32_t *> faces;
     uint64_t interval = 1;
     std::shared_ptr<std::ofstream> out;
@@ -41,6 +44,7 @@ struct ForceMonitor {
 
 struct IntegralMonitor {
     uint64_t interval = 0;
+    std::string file;
     std::shared_ptr<std::ofstream> out;
 };
 
@@ -86,7 +90,7 @@ class Solver {
         /**
          * @brief Compute dU/dt for the given conservative state at time t.
          */
-        void calc_rhs(StateView solution, StateView rhs, rtype t);
+        void calc_rhs(State solution, State rhs, rtype t);
 
         /**
          * @brief Compute the stable time step for the current solution.
@@ -147,9 +151,17 @@ class Solver {
         const Euler & get_physics() const { return physics; }
         std::shared_ptr<Mesh> get_mesh() const { return mesh; }
 
+        /** @brief The solution: flow block and species partial densities. */
+        State state() const { return State(conservatives, species); }
+
+        /** @brief Names of the transported species, empty for a single gas. */
+        const std::vector<std::string> & get_species_names() const { return species_names; }
+
         StateView conservatives;
+        SpeciesView species;
         Kokkos::View<rtype *[N_PRIMITIVE]> primitives;
         StateView::host_mirror_type h_conservatives;
+        SpeciesView::host_mirror_type h_species;
         Kokkos::View<rtype *[N_PRIMITIVE]>::host_mirror_type h_primitives;
 
     protected:
@@ -176,9 +188,14 @@ class Solver {
         void update_source_field(rtype t_eval);
         void allocate_memory();
         void register_data();
-        bool done() const;
-        void print_logo() const;
-        void do_checks();
+        std::vector<std::string> restart_variables() const;  // Flow block, then RHOY_<species>
+        std::string stop_reason() const;  // Empty while no stop condition holds
+        double progress() const;          // Fraction of the run done, by the first stop condition to hit
+        void print_setup() const;
+        void print_progress();
+        void print_summary(const std::string & stop) const;
+        template <typename F>
+        void timed_phase(const std::string & name, F && f);
         void write_data(bool force = false);
         void write_forces();
         void write_integrals();
@@ -186,14 +203,23 @@ class Solver {
     private:
         bool distribute = true;
         int halo_layers = 0;
+        std::unique_ptr<DistributedMesh> setup;  // during init only
+        std::string partitioner;
         Distribution distribution;
         HaloExchange halo;
 
         int base_halo_layers() const;
         bool halo_too_shallow();
+        void init_rhs_split();
 
         template <typename T_riemann_solver>
         void launch_flux_functor();
+
+        Kokkos::View<uint32_t *> rhs_cells;  // reconstructed cells, the n_early_cells independent of the halo first
+        uint32_t n_early_cells = 0;
+        Kokkos::View<uint32_t *> rhs_faces;  // faces of owned cells, whose fluxes are used; empty if all faces
+        Kokkos::DefaultExecutionSpace overlap_space;  // runs the early cells while the halo is exchanged
+        bool halo_current = false;                     // halo of conservatives filled since its last update
 
         toml::value input;
 
@@ -208,20 +234,42 @@ class Solver {
         rtype t;
         uint64_t step;
         Kokkos::Timer timer;
-        rtype t_wall_last_check;
-        rtype t_last_check;
+        uint64_t n_cells_global = 0;
+
+        // Run log
+        logging::Items mesh_summary;
+        logging::Items boundary_summary;
+        logging::Items source_summary;
+        std::string initial_state;
+        double t_wall_setup = 0.0;
+        double t_wall_stepping = 0.0;
+        double t_wall_checks = 0.0;
+        double t_wall_output = 0.0;
+        double t_wall_run_start = 0.0;
+        double t_stepping_last_check = 0.0;
+        double progress_run_start = 0.0;
+        uint64_t step_run_start = 0;
+        uint64_t step_last_check = 0;
+        uint64_t n_progress_rows = 0;
 
         // Numerics and physics
         std::shared_ptr<Mesh> mesh;
         Euler physics;
+        std::vector<std::string> species_names;
         BoundaryData boundary_data;
         std::vector<DirichletBoundary> dirichlet_boundaries;
-        std::vector<std::pair<int32_t, Kokkos::View<uint32_t *>>> average_pressure_outlets;  // (bc index, faces)
+        struct AveragePressureOutlet {
+            int32_t i_bc;
+            Kokkos::View<uint32_t *> faces;   // Faces of owned cells
+            std::vector<uint32_t> sum_order;  // Order of the gathered faces of all ranks by global key
+        };
+        std::vector<AveragePressureOutlet> average_pressure_outlets;
         Kokkos::View<rtype *[N_DIM + 2]>::host_mirror_type h_face_state;
         Kokkos::View<int32_t *>::host_mirror_type h_face_state_index;
         rtype t_boundary_states;
         std::unique_ptr<FaceReconstruction> face_reconstruction;
         RiemannSolverType riemann_solver_type;
+        rtype low_mach_cutoff = 0.1;
         std::unique_ptr<TimeIntegrator> time_integrator;
 
         // Work arrays
@@ -233,8 +281,8 @@ class Solver {
         Kokkos::View<rtype *> cfl_local;
         Kokkos::View<rtype *>::host_mirror_type h_cfl_local;
         Kokkos::View<rtype *>::host_mirror_type h_teno_sigma;
-        std::vector<StateView> solution_vec;
-        std::vector<StateView> rhs_vec;
+        std::vector<State> solution_vec;
+        std::vector<State> rhs_vec;
         RHSFunction rhs_func;
 
         // Source terms

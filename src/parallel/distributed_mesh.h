@@ -21,6 +21,7 @@
 
 #include "distribution.h"
 #include "mesh_block.h"
+#include "periodic.h"
 
 class Mesh;
 
@@ -33,7 +34,9 @@ class Mesh;
  *        1. Construction matches faces across ranks: each cell face and
  *           boundary face goes to a rank chosen by hashing its sorted node
  *           ids, which pairs them into the dual graph and tags each cell's
- *           boundary faces with their zones.
+ *           boundary faces with their zones. With periodic pairs, nodes are
+ *           first replaced by their periodic keys (see docs/design/periodic.md),
+ *           so the faces of paired zones join into interior faces.
  *        2. A partitioner assigns an owner to every block cell
  *           (partition_hilbert, partition_graph), and distribute() sends each
  *           cell to its owner.
@@ -46,8 +49,11 @@ class Mesh;
  */
 class DistributedMesh {
     public:
-        /** @brief Match faces across ranks (collective). */
-        explicit DistributedMesh(MeshBlock block);
+        /**
+         * @brief Match faces across ranks, joining the zones of the periodic
+         *        pairs (collective).
+         */
+        explicit DistributedMesh(MeshBlock block, const std::vector<Mesh::PeriodicPair> & periodic = {});
 
         uint64_t n_global_cells() const { return cell_dist.back(); }
         uint64_t first_cell() const { return block.first_cell; }
@@ -56,14 +62,14 @@ class DistributedMesh {
         /** @brief First block cell of every rank, and the total (ParMETIS vtxdist). */
         const std::vector<uint64_t> & cell_distribution() const { return cell_dist; }
 
-        /** @brief Dual graph of the block cells (cells sharing a face), by global id (CSR). */
+        /** @brief Dual graph of the block cells (cells sharing a face), by global id (CSR); until distribute(). */
         const std::vector<uint64_t> & graph_offsets() const { return graph_offsets_; }
         const std::vector<uint64_t> & graph_neighbors() const { return graph_neighbors_; }
 
         /** @brief Vertex average of every block cell (collective). */
         std::vector<std::array<double, N_DIM>> block_cell_centers() const;
 
-        /** @brief Send every block cell to its owner rank (collective). */
+        /** @brief Send every block cell to its owner rank, and drop the dual graph (collective). */
         void distribute(const std::vector<int> & owner);
 
         /**
@@ -86,27 +92,40 @@ class DistributedMesh {
             std::vector<std::array<uint32_t, 2>> boundary;           // (local face, zone)
         };
 
+        /**
+         * @brief Match the nodes of the periodic zones: every rank gathers the
+         *        zones' faces and nodes (a surface of the mesh) and finds the
+         *        same classes (collective).
+         */
+        void match_periodic(const std::vector<Mesh::PeriodicPair> & pairs);
+
+        /** @brief Periodic key of a node (the node itself if it is not periodic). */
+        uint64_t node_key(uint64_t g) const;
+
         int rank_of_cell(uint64_t g) const;
         int rank_of_node(uint64_t g) const;
         void append_record(std::vector<uint64_t> & out, uint32_t i) const;
-        void read_records(const std::vector<std::vector<uint64_t>> & in, uint8_t layer);
+        void read_records(const std::vector<uint64_t> & in, uint8_t layer);
         std::vector<std::array<double, N_DIM>> fetch_nodes(const std::vector<uint64_t> & sorted_ids) const;
         void grow_layer();
 
         MeshBlock block;
         std::vector<uint64_t> cell_dist, node_dist;
         std::vector<std::string> zones;  // the block's zones, then "unassigned"
+        // Periodic nodes: key and lattice offset of every node of a periodic zone
+        PeriodicNodes periodic_classes;  // translations and zones only
+        std::unordered_map<uint64_t, std::pair<uint64_t, std::array<int8_t, 3>>> periodic_nodes;
         std::vector<uint64_t> graph_offsets_, graph_neighbors_;
         std::vector<uint32_t> boundary_offsets{0};
         std::vector<std::array<uint32_t, 2>> boundary;  // per block cell: (local face, zone)
 
         // After distribute()
         std::vector<int> owner;                         // per block cell
-        std::vector<uint64_t> directory_offsets{0};     // per block node: cells using it
+        std::vector<uint64_t> directory_offsets{0};     // per block node: cells using it (by node key)
         std::vector<std::pair<uint64_t, int>> directory;  // (cell, owner)
         Cells cells;
         std::unordered_map<uint64_t, uint32_t> halo_index;  // halo cell -> index in cells
-        std::vector<uint64_t> owned_nodes;                   // sorted
+        std::vector<uint64_t> owned_nodes;                   // keys of the owned cells' nodes, sorted
         std::unordered_set<uint64_t> searched_nodes;         // halo nodes whose cells are all here
         std::vector<std::pair<uint64_t, int>> next_layer;    // layer 1, found by distribute()
         int layers = 0;

@@ -54,6 +54,9 @@ inline bool is_root() { return rank() == 0; }
 /** @brief Block until all ranks arrive. */
 void barrier();
 
+/** @brief Ends every rank with the given exit code (MPI_Abort in parallel runs). */
+[[noreturn]] void abort(int code);
+
 enum class Op { SUM, MIN, MAX };
 
 /**
@@ -80,6 +83,26 @@ std::array<T, N> allreduce(std::array<T, N> values, Op op) {
  */
 template <typename T>
 std::vector<std::vector<T>> alltoallv(const std::vector<std::vector<T>> & send);
+
+/**
+ * @brief What an exchange() received: the part from rank r is
+ *        data[offsets[r], offsets[r + 1]).
+ */
+template <typename T>
+struct Received {
+    std::vector<T> data;
+    std::vector<uint64_t> offsets;
+
+    std::span<const T> from(int r) const { return {data.data() + offsets[r], data.data() + offsets[r + 1]}; }
+};
+
+/**
+ * @brief Personalized all-to-all like alltoallv, for large setup-time
+ *        messages: frees each send list once packed, and returns what it
+ *        received in one buffer, in rank order.
+ */
+template <typename T>
+Received<T> exchange(std::vector<std::vector<T>> && send);
 
 /**
  * @brief Concatenation of every rank's local vector, in rank order.

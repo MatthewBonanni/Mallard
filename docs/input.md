@@ -32,6 +32,12 @@ At least one stop condition is required.
 
 Generated meshes have boundary zones named `left`, `right`, `bottom` and `top`.
 
+`periodic = ["x", "y"]` (and `"z"` in 3D) makes a generated mesh (except
+`wedge`) periodic in those directions: `left`/`right`, `bottom`/`top` and
+`back`/`front` are joined into interior faces and disappear as boundary zones.
+Every scheme sees the seam as interior. Each periodic direction needs at least
+3 cells. Mesh files cannot be periodic yet.
+
 In the 3D build (`-DMallard_DIM=3`), generated meshes are boxes
 `[0, Lx] x [0, Ly] x [0, Lz]` of `Nx x Ny x Nz` blocks (`Nz`, `Lz` default to
 100 and 1), with the extra boundary zones `back` (z = 0) and `front` (z = Lz):
@@ -54,9 +60,10 @@ zone named after it (`physical_<tag>` if unnamed); boundary faces not in any
 such group form the zone `unassigned`. Elements of other dimensions (points,
 and curves in 3D) are ignored, and higher-order elements are rejected.
 
-Large meshes should be converted to Mallard's HDF5 mesh format (builds with
-`-DMallard_ENABLE_HDF5=ON`), which every rank of a distributed run reads only
-its share of:
+In a distributed run every rank reads a Gmsh file whole (keeping only its
+share), so large meshes should be converted to Mallard's HDF5 mesh format
+(builds with `-DMallard_ENABLE_HDF5=ON`), of which each rank reads only its
+share; generated meshes are also produced per rank:
 
 ```sh
 mallard-mesh-convert mesh.msh mesh.h5               # from Gmsh
@@ -91,13 +98,14 @@ count, Gmsh/VTK node order), `/boundary/offsets`, `/boundary/nodes` and
 | `u` | `constant`: `[u_x, u_y]`; `analytical`: one expression in `x`, `y`, `z` per component |
 | `rho`, `p`, `T` | `constant`: `p` and `T`; `analytical`: exactly two of the three, as expressions in `x`, `y`, `z` |
 | `n_subdivisions` | (`analytical`) Resolution of the cell averages. 2D: each cell's triangles are split into `n_subdivisions`² sub-triangles (default 4). 3D: each of the cell's tetrahedra is integrated with a 64-point rule on each of `n_subdivisions`³ pieces (default 2) |
-| `file` | (`restart`) Restart file to resume from |
+| `file` | (`restart`) Restart file to resume from. Restart files list their variables by name (format version 2) and are read by name; files of version 1 (Mallard 0.3 and earlier) are still read |
 
 Expressions use [exprtk](https://www.partow.net/programming/exprtk/) syntax, e.g. `"x < 0.5 ? 1.0 : 0.125"`.
 
 ## `[[boundaries]]`
 
-Every boundary face must be assigned exactly once. A zone can be split
+Every boundary face must be assigned exactly once (a fully periodic mesh has
+none, and needs no `[[boundaries]]`). A zone can be split
 between several entries with `where = "<expression in x, y, z>"`, which selects
 the zone's faces whose centers satisfy the expression.
 
@@ -121,6 +129,7 @@ the zone's faces whose centers satisfy the expression.
 | `riemann_solver` | `Rusanov`, `HLL`, `HLLC` (default), `Roe`, or `RHLL` (rotated hybrid HLL-Roe, carbuncle-free) |
 | `time_integrator` | `FE`, `SSPRK3` (default) or `RK4` |
 | `check_nan` | Stop if the solution becomes non-finite |
+| `low_mach_cutoff` | Low-Mach correction of the convective flux: the velocity jump across each interior face is scaled by `z = min(1, max(M_L, M_R, low_mach_cutoff))` before the Riemann solver, so that upwind dissipation scales with the flow speed rather than the sound speed. Default 0.1; 1 disables it. See [`numerics/overview.md`](numerics/overview.md) |
 
 ### `[numerics.face_reconstruction]`
 
@@ -137,7 +146,7 @@ the zone's faces whose centers satisfy the expression.
 | `C_T` | (`TENO`) Fixed TENO cutoff; adaptive (1e-10 to 1e-6) if omitted |
 | `characteristic` | (`TENO`) Select stencils on characteristic variables, default true |
 | `max_condition` | (`TENO`) Stencils grow until the least-squares system's condition estimate is below this, default 1e8 |
-| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options |
+| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options (serial runs only). The file is large in 3D: about 50 KB per cell for order 5, e.g. 13 GB for 64^3 hexahedra |
 | `bound_preserving` | (`TENO`) Scale troubled-cell polynomials to keep density and pressure within the neighbors' range, default false |
 
 ## `[[forces]]`
@@ -195,7 +204,18 @@ Used when Mallard runs on several MPI ranks (`mpirun -n N Mallard -i input.toml`
 
 | Key | Description |
 |---|---|
-| `check_interval` | Print solution ranges and timing every this many steps |
+| `check_interval` | Print a progress row every this many steps (default 1) |
+
+Each progress row shows the step, time `t`, time step `dt`, the fraction of the run done (by
+whichever of `n_steps`, `t_stop` and `t_wall_stop` comes first), the time-stepping wall time
+per step, the throughput in cell updates per second, the estimated time remaining, the minimum
+density and pressure, the maximum Mach number and, with TENO, the percentage of troubled cells.
+Files written appear as rows led by their step and time. The run ends with a summary of wall
+time (setup, time stepping, diagnostics, output) and average throughput.
+
+Only rank 0 prints, except for errors, which go to stderr from any rank and carry the rank in
+parallel runs. Output on a terminal is colored unless `NO_COLOR` is set (`CLICOLOR_FORCE=1`
+forces color, e.g. under `mpirun`); logs written to files are plain ASCII.
 
 ## `[[write_data]]`
 
