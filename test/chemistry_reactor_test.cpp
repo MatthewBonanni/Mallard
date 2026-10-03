@@ -33,6 +33,10 @@ namespace {
 
 const std::string SOURCE_DIR = MALLARD_SOURCE_DIR;
 
+// Row-major on every backend: kernels take pointers to rows
+template <typename T>
+using Rows = Kokkos::View<T **, Kokkos::LayoutRight>;
+
 struct Table {
     std::vector<std::string> columns;
     std::vector<std::vector<double>> rows;
@@ -137,7 +141,7 @@ IgnitionResults device_ignition(const Mechanism & mech, const Table & ref) {
     const size_t c_rho = ref.column("rho"), c_Y0 = ref.column("Y0_" + mech.species[0].name);
     const size_t c_T0 = ref.column("T0"), c_tau = ref.column("tau");
     // Per case: rho, T, tau_ref, Y; out: tau, T(tau/2), T(2 tau), steps, failures, T_eq, Y_eq
-    Kokkos::View<double **> state("state", n_cases, 3 + ns), out("out", n_cases, 6 + ns);
+    Rows<double> state("state", n_cases, 3 + ns), out("out", n_cases, 6 + ns);
     auto h_state = Kokkos::create_mirror_view(state);
     for (uint32_t c = 0; c < n_cases; c++) {
         h_state(c, 0) = ref.rows[c][c_rho];
@@ -146,8 +150,8 @@ IgnitionResults device_ignition(const Mechanism & mech, const Table & ref) {
         for (uint32_t k = 0; k < ns; k++) h_state(c, 3 + k) = ref.rows[c][c_Y0 + k];
     }
     Kokkos::deep_copy(state, h_state);
-    Kokkos::View<double **> work("work", n_cases, reactor_work_size(ns, kinetics.n_reactions));
-    Kokkos::View<uint32_t **> pivot("pivot", n_cases, ns + 1);
+    Rows<double> work("work", n_cases, reactor_work_size(ns, kinetics.n_reactions));
+    Rows<uint32_t> pivot("pivot", n_cases, ns + 1);
     const ReactorOptions options;
     Kokkos::parallel_for("ignition", n_cases, KOKKOS_LAMBDA(const uint32_t c) {
         const double rho = state(c, 0), tau_ref = state(c, 2);
