@@ -116,7 +116,10 @@ for accuracy (expect design order on uniform triangles).
   `cartesian_tet` cells of the same size reached Mach 1.2. The Lebesgue bound
   cured that order-3 prism case, but tetrahedra (order 3, aspect ratio 1.5 and up)
   and prisms (order 4 with walls all around, aspect ratio 3 and up) kept growing
-  modes. Remaining:
+  modes. On the `examples/sphere_re300` mesh (`--scale 0.6`, 258k cells, prism
+  layers of aspect ratio about 7), TENO3 previously reached Mach 0.9 by t = 1
+  with a free stream at 0.2. It now stays at the potential-flow start's 0.30
+  or below to t = 10 (6741 steps), at 2.1 times MUSCL's cost per step. Remaining:
   - Prisms of aspect ratio 2 at order 4 in a box with walls all around (spacing
     ratio 2.25, below the cut-off) keep a growing mode (eigenvalue +2.8) as before.
     With the metric applied, the same box is stable.
