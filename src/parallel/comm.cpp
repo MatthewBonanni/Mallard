@@ -12,6 +12,7 @@
 #include "comm.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
@@ -19,9 +20,31 @@
 
 namespace comm {
 
+namespace {
+
+double waited = 0.0;
+
+} // namespace
+
+double wait_seconds() { return waited; }
+
+void add_wait(double seconds) { waited += seconds; }
+
 #ifdef Mallard_HAS_MPI
 
 namespace {
+
+/** @brief Adds the lifetime of the scope to the wait time. */
+class WaitTimer {
+    public:
+        WaitTimer() : start(std::chrono::steady_clock::now()) {}
+        ~WaitTimer() { waited += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count(); }
+        WaitTimer(const WaitTimer &) = delete;
+        WaitTimer & operator=(const WaitTimer &) = delete;
+
+    private:
+        std::chrono::steady_clock::time_point start;
+};
 
 template <typename T>
 MPI_Datatype mpi_type() {
@@ -90,6 +113,7 @@ void abort(int code) {
 
 template <typename T>
 void allreduce(std::span<T> data, Op op) {
+    const WaitTimer timer;
     check(MPI_Allreduce(MPI_IN_PLACE, data.data(), static_cast<int>(data.size()), mpi_type<T>(), mpi_op(op),
                         MPI_COMM_WORLD),
           "MPI_Allreduce");
@@ -154,6 +178,7 @@ Received<T> exchange(std::vector<std::vector<T>> && send) {
 
 template <typename T>
 std::vector<T> allgatherv(const std::vector<T> & local) {
+    const WaitTimer timer;
     const int p = size();
     int n_local = static_cast<int>(local.size());
     std::vector<int> counts(p), displs(p + 1, 0);

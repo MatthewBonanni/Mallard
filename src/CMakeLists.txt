@@ -25,6 +25,7 @@ add_library(MallardCore STATIC
     parallel/distribution.cpp
     parallel/distributed_mesh.cpp
     parallel/halo_exchange.cpp
+    parallel/load_balance.cpp
     parallel/partition.cpp
 )
 

@@ -12,12 +12,15 @@
 #include "solver.h"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <stdexcept>
 
 #include "comm.h"
+#include "log.h"
 #include "partition.h"
 
-void Solver::rebalance(const std::vector<uint64_t> & weights) {
+uint64_t Solver::rebalance(const std::vector<uint64_t> & weights) {
     if (!setup) {
         throw std::logic_error("Solver::rebalance: needs a distributed run with parallel.rebalance = true.");
     }
@@ -49,7 +52,9 @@ void Solver::rebalance(const std::vector<uint64_t> & weights) {
     const std::vector<int> dest = setup->owners_of_owned(owner);
     std::vector<std::vector<uint64_t>> send_ids(p);
     std::vector<std::vector<double>> send_values(p);
+    uint64_t moved = 0;
     for (uint32_t c = 0; c < n_owned; c++) {
+        moved += dest[c] != comm::rank();
         send_ids[dest[c]].push_back(distribution.global_cell[c]);
         auto & out = send_values[dest[c]];
         FOR_I_CONSERVATIVE out.push_back(double(h_conservatives(c, i)));
@@ -89,4 +94,78 @@ void Solver::rebalance(const std::vector<uint64_t> & weights) {
     halo.exchange(state());
     halo_current = false;
     update_primitives();
+    return comm::allreduce(moved, comm::Op::SUM);
+}
+
+namespace {
+
+/** @brief Counts, per owned cell, the steps in which TENO marked it troubled. */
+struct TroubledCountFunctor {
+    Kokkos::View<rtype *> sigma;
+    rtype threshold;
+    Kokkos::View<uint32_t *> steps;
+
+    KOKKOS_INLINE_FUNCTION
+    void operator()(const uint32_t i_cell) const {
+        if (sigma(i_cell) >= threshold) steps(i_cell)++;
+    }
+};
+
+struct TroubledSumFunctor {
+    Kokkos::View<uint32_t *> steps;
+
+    KOKKOS_INLINE_FUNCTION
+    void operator()(const uint32_t i_cell, uint64_t & sum) const { sum += steps(i_cell); }
+};
+
+} // namespace
+
+void Solver::count_troubled() {
+    const auto * teno = dynamic_cast<const TENO *>(face_reconstruction.get());
+    if (teno == nullptr) return;
+    Kokkos::parallel_for("count_troubled", troubled_steps.extent(0),
+                         TroubledCountFunctor{teno->troubled, teno->sigma_threshold, troubled_steps});
+}
+
+void Solver::consider_rebalance() {
+    const uint64_t steps = step - window_step;
+    uint64_t troubled = 0;
+    Kokkos::View<uint32_t *> counts = troubled_steps;
+    Kokkos::parallel_reduce("sum_troubled", counts.extent(0), TroubledSumFunctor{counts}, troubled);
+    const std::vector<double> flat = comm::allgatherv(
+        std::vector<double>{window_busy, double(mesh->n_owned()) * double(steps), double(troubled)});
+    std::vector<RankLoad> loads(flat.size() / 3);
+    for (size_t r = 0; r < loads.size(); r++) loads[r] = {flat[3 * r], flat[3 * r + 1], flat[3 * r + 2]};
+    troubled_cost = fit_troubled_cost(loads, troubled_cost);
+    last_imbalance = imbalance(loads);
+
+    // Every rank must decide alike: clocks and progress from the slowest rank
+    const auto [elapsed, f] = comm::allreduce(std::array<double, 2>{timer.seconds(), progress()}, comm::Op::MAX);
+    const double df = f - progress_run_start;
+    const double horizon = std::min(df > 0.0 ? double(step - step_run_start) * (1.0 - f) / df
+                                             : double(rebalance_policy.interval),
+                                    10.0 * double(rebalance_policy.interval));
+    const double projected = f > 0.0 ? elapsed / f : elapsed;
+    if (rebalance_pays(loads, steps, horizon, rebalance_cost, t_wall_rebalance, projected, rebalance_policy)) {
+        auto h_counts = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), counts);
+        std::vector<uint64_t> weights(h_counts.extent(0));
+        for (size_t c = 0; c < weights.size(); c++) {
+            const double cost = 1.0 + (troubled_cost - 1.0) * h_counts(c) / double(steps);
+            weights[c] = static_cast<uint64_t>(std::llround(WEIGHT_UNIT * cost));
+        }
+        Kokkos::Timer rebalance_timer;
+        const uint64_t moved = rebalance(weights);
+        const double seconds = comm::allreduce(rebalance_timer.seconds(), comm::Op::MAX);
+        rebalance_cost = seconds;
+        t_wall_rebalance += seconds;
+        n_rebalances++;
+        logging::event(step, double(t), "rebalance",
+                       logging::format("imbalance %.2f, troubled cells cost %.1f, %s cells moved in %s",
+                                       last_imbalance, troubled_cost, logging::count(moved).c_str(),
+                                       logging::duration(seconds).c_str()));
+    } else {
+        Kokkos::deep_copy(troubled_steps, 0u);
+    }
+    window_step = step;
+    window_busy = 0.0;
 }

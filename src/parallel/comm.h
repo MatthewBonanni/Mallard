@@ -57,6 +57,16 @@ void barrier();
 /** @brief Ends every rank with the given exit code (MPI_Abort in parallel runs). */
 [[noreturn]] void abort(int code);
 
+/**
+ * @brief Host seconds this rank has spent blocked in allreduce, allgatherv
+ *        and the waits passed to add_wait (the halo exchange): time spent
+ *        waiting for other ranks rather than working.
+ */
+double wait_seconds();
+
+/** @brief Add a wait outside comm to wait_seconds(). */
+void add_wait(double seconds);
+
 enum class Op { SUM, MIN, MAX };
 
 /**
