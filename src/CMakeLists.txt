@@ -2,8 +2,11 @@
 add_library(MallardCore STATIC
     common/common_math.cpp
     common/common_io.cpp
+    common/build_info.cpp
+    common/log.cpp
     mesh/mesh.cpp
     mesh/mesh_io.cpp
+    mesh/periodic.cpp
     mesh/mesh_3d.cpp
     mesh/mesh_block.cpp
     mesh/zone.cpp
@@ -37,6 +40,9 @@ target_include_directories(MallardCore PUBLIC
 )
 target_link_libraries(MallardCore PUBLIC Kokkos::kokkos)
 mallard_target_warnings(MallardCore)
+
+configure_file(common/version.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/version.h @ONLY)
+target_include_directories(MallardCore PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
 if(Mallard_ENABLE_MPI)
     target_link_libraries(MallardCore PUBLIC MPI::MPI_CXX)
     target_compile_definitions(MallardCore PUBLIC Mallard_HAS_MPI)

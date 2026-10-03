@@ -32,6 +32,12 @@ At least one stop condition is required.
 
 Generated meshes have boundary zones named `left`, `right`, `bottom` and `top`.
 
+`periodic = ["x", "y"]` (and `"z"` in 3D) makes a generated mesh (except
+`wedge`) periodic in those directions: `left`/`right`, `bottom`/`top` and
+`back`/`front` are joined into interior faces and disappear as boundary zones.
+Every scheme sees the seam as interior. Each periodic direction needs at least
+3 cells. Mesh files cannot be periodic yet.
+
 In the 3D build (`-DMallard_DIM=3`), generated meshes are boxes
 `[0, Lx] x [0, Ly] x [0, Lz]` of `Nx x Ny x Nz` blocks (`Nz`, `Lz` default to
 100 and 1), with the extra boundary zones `back` (z = 0) and `front` (z = Lz):
@@ -98,7 +104,8 @@ Expressions use [exprtk](https://www.partow.net/programming/exprtk/) syntax, e.g
 
 ## `[[boundaries]]`
 
-Every boundary face must be assigned exactly once. A zone can be split
+Every boundary face must be assigned exactly once (a fully periodic mesh has
+none, and needs no `[[boundaries]]`). A zone can be split
 between several entries with `where = "<expression in x, y, z>"`, which selects
 the zone's faces whose centers satisfy the expression.
 
@@ -197,7 +204,18 @@ Used when Mallard runs on several MPI ranks (`mpirun -n N Mallard -i input.toml`
 
 | Key | Description |
 |---|---|
-| `check_interval` | Print solution ranges and timing every this many steps |
+| `check_interval` | Print a progress row every this many steps (default 1) |
+
+Each progress row shows the step, time `t`, time step `dt`, the fraction of the run done (by
+whichever of `n_steps`, `t_stop` and `t_wall_stop` comes first), the time-stepping wall time
+per step, the throughput in cell updates per second, the estimated time remaining, the minimum
+density and pressure, the maximum Mach number and, with TENO, the percentage of troubled cells.
+Files written appear as rows led by their step and time. The run ends with a summary of wall
+time (setup, time stepping, diagnostics, output) and average throughput.
+
+Only rank 0 prints, except for errors, which go to stderr from any rank and carry the rank in
+parallel runs. Output on a terminal is colored unless `NO_COLOR` is set (`CLICOLOR_FORCE=1`
+forces color, e.g. under `mpirun`); logs written to files are plain ASCII.
 
 ## `[[write_data]]`
 

@@ -16,8 +16,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <iostream>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 #include <Kokkos_Core.hpp>
@@ -31,13 +31,29 @@ FaceReconstruction::FaceReconstruction() {
 }
 
 FaceReconstruction::~FaceReconstruction() {
-    std::cout << "Destroying face reconstruction: " << FACE_RECONSTRUCTION_NAMES.at(type) << std::endl;
+    // Empty
 }
 
-void FaceReconstruction::print() const {
-    std::cout << LOG_SEPARATOR << std::endl;
-    std::cout << "Face reconstruction: " << FACE_RECONSTRUCTION_NAMES.at(type) << std::endl;
-    std::cout << LOG_SEPARATOR << std::endl;
+logging::Items FaceReconstruction::summary() const {
+    return {{"Reconstruction", type == FaceReconstructionType::FIRST_ORDER ? "first order" : FACE_RECONSTRUCTION_NAMES.at(type)}};
+}
+
+std::vector<uint32_t> FaceReconstruction::cells_independent_of_halo(uint32_t) const {
+    return {};
+}
+
+void FaceReconstruction::calc_cell_face_values(const Kokkos::DefaultExecutionSpace &,
+                                               Kokkos::View<rtype *[N_CONSERVATIVE]>,
+                                               Kokkos::View<rtype **[2][N_CONSERVATIVE]>,
+                                               Kokkos::View<uint32_t *>) {
+    throw std::logic_error("Face reconstruction " + FACE_RECONSTRUCTION_NAMES.at(type) +
+                           " cannot reconstruct a subset of the cells.");
+}
+
+void FaceReconstruction::finish_cell_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]>,
+                                                 Kokkos::View<rtype **[2][N_CONSERVATIVE]>) {
+    throw std::logic_error("Face reconstruction " + FACE_RECONSTRUCTION_NAMES.at(type) +
+                           " cannot reconstruct a subset of the cells.");
 }
 
 void FaceReconstruction::set_mesh(std::shared_ptr<Mesh> mesh) {
@@ -158,7 +174,6 @@ FirstOrder::~FirstOrder() {
 void FirstOrder::init(const toml::value & input) {
     (void)(input);
     if constexpr (N_DIM == 3) init_face_quadrature_3d(1);
-    print();
 }
 
 uint8_t FirstOrder::n_face_quadrature_points() const {
@@ -220,24 +235,19 @@ void MUSCL::init(const toml::value & input) {
     const std::string limiter_str = toml::find_or<std::string>(input, "limiter", "venkatakrishnan");
     auto it = LIMITER_TYPES.find(limiter_str);
     if (it == LIMITER_TYPES.end()) {
-        throw std::runtime_error("Unknown limiter type: " + limiter_str + ".");
+        throw unknown_option(LIMITER_TYPES, "numerics.face_reconstruction.limiter", limiter_str);
     }
     limiter = it->second;
     venkat_K = find_real_or(input, "venkatakrishnan_K", 5.0);
     gradients = Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]>("gradients", mesh->n_cells);
     limiters = Kokkos::View<rtype *[N_CONSERVATIVE]>("limiters", mesh->n_cells);
     if constexpr (N_DIM == 3) init_face_quadrature_3d(1);
-    print();
 }
 
-void MUSCL::print() const {
-    std::cout << LOG_SEPARATOR << std::endl;
-    std::cout << "Face reconstruction: " << FACE_RECONSTRUCTION_NAMES.at(type) << std::endl;
-    std::cout << "> Limiter: " << LIMITER_NAMES.at(limiter) << std::endl;
-    if (limiter == LimiterType::VENKATAKRISHNAN) {
-        std::cout << "> Venkatakrishnan K: " << venkat_K << std::endl;
-    }
-    std::cout << LOG_SEPARATOR << std::endl;
+logging::Items MUSCL::summary() const {
+    std::string limiter_text = LIMITER_NAMES.at(limiter);
+    if (limiter == LimiterType::VENKATAKRISHNAN) limiter_text += " (K " + logging::real(venkat_K) + ")";
+    return {{"Reconstruction", "MUSCL, limiter " + limiter_text}};
 }
 
 uint8_t MUSCL::n_face_quadrature_points() const {
@@ -306,8 +316,10 @@ struct LimiterFunctor {
         if (limiter != LimiterType::NONE) {
             for (uint32_t k = k_begin; k < k_end; k++) {
                 const uint32_t i_face = neighbors.faces_of_cell(k);
+                // The face centroid is in its cell 0's frame
+                const uint8_t s = (neighbors.cells_of_face(i_face, 1) == (int32_t)i_cell) ? neighbors.face_shift(i_face) : 0;
                 rtype r[N_DIM];
-                FOR_I_DIM r[i] = neighbors.face_coords(i_face, i) - neighbors.cell_coords(i_cell, i);
+                FOR_I_DIM r[i] = (neighbors.face_coords(i_face, i) - neighbors.shifts(s, i)) - neighbors.cell_coords(i_cell, i);
                 FOR_I_CONSERVATIVE {
                     rtype grad[N_DIM];
                     for (uint8_t d = 0; d < N_DIM; d++) grad[d] = neighbors.gradients(i_cell, i, d);
@@ -337,6 +349,8 @@ struct MUSCLFaceFunctor {
     Kokkos::View<int32_t *[2]> cells_of_face;
     Kokkos::View<rtype *[N_DIM]> cell_coords;
     Kokkos::View<rtype *[N_DIM]> face_coords;
+    Kokkos::View<rtype *[N_DIM]> shifts;
+    Kokkos::View<uint8_t *> face_shift;
     Kokkos::View<rtype *[N_CONSERVATIVE]> W;
     Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]> gradients;
     Kokkos::View<rtype *[N_CONSERVATIVE]> limiters;
@@ -347,8 +361,10 @@ struct MUSCLFaceFunctor {
         for (uint8_t side = 0; side < 2; side++) {
             const int32_t c = cells_of_face(i_face, side);
             if (c < 0) continue;
+            // The face centroid is in cell 0's frame
+            const uint8_t s = side ? face_shift(i_face) : 0;
             rtype r[N_DIM];
-            FOR_I_DIM r[i] = face_coords(i_face, i) - cell_coords(c, i);
+            FOR_I_DIM r[i] = (face_coords(i_face, i) - shifts(s, i)) - cell_coords(c, i);
             rtype W_f[N_CONSERVATIVE];
             FOR_I_CONSERVATIVE {
                 rtype grad[N_DIM];
@@ -363,15 +379,7 @@ struct MUSCLFaceFunctor {
 
 void MUSCL::calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
                              Kokkos::View<rtype **[2][N_CONSERVATIVE]> face_solution) {
-    LSQGradientFunctor gradient_functor{mesh->offsets_faces_of_cell,
-                                        mesh->faces_of_cell,
-                                        mesh->cells_of_face,
-                                        mesh->cell_coords,
-                                        mesh->face_coords,
-                                        mesh->face_normals,
-                                        boundaries,
-                                        solution,
-                                        gradients};
+    LSQGradientFunctor gradient_functor = make_gradient(*mesh, boundaries, solution, gradients);
     Kokkos::parallel_for("lsq_gradient", mesh->n_cells, gradient_functor);
 
     LimiterFunctor limiter_functor{gradient_functor, mesh->cell_volume, limiters, limiter, venkat_K};
@@ -380,6 +388,8 @@ void MUSCL::calc_face_values(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
     MUSCLFaceFunctor face_functor{mesh->cells_of_face,
                                   mesh->cell_coords,
                                   mesh->face_coords,
+                                  mesh->shifts,
+                                  mesh->face_shift,
                                   solution,
                                   gradients,
                                   limiters,
