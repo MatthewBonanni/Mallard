@@ -57,8 +57,8 @@ void Solver::timed_phase(const std::string & name, F && f) {
     logging::end_phase(seconds);
 }
 
-int Solver::init(const toml::value & input) {
-    this->input = input;
+int Solver::init(const toml::value & input_in) {
+    this->input = input_in;
 
     t = 0.0;
     step = 0;
@@ -268,7 +268,7 @@ void Solver::init_rhs_split() {
     std::vector<uint32_t> faces;
     for (uint32_t f = 0; f < mesh->n_faces; f++) {
         const int32_t c0 = mesh->h_cells_of_face(f, 0), c1 = mesh->h_cells_of_face(f, 1);
-        if (c0 < (int32_t)n_owned || (c1 >= 0 && c1 < (int32_t)n_owned)) faces.push_back(f);
+        if (c0 < static_cast<int32_t>(n_owned) || (c1 >= 0 && c1 < static_cast<int32_t>(n_owned))) faces.push_back(f);
     }
     rhs_faces = to_device(faces.size() < mesh->n_faces ? faces : std::vector<uint32_t>(), "rhs_faces");
 
@@ -567,7 +567,7 @@ void Solver::init_numerics() {
     face_reconstruction->set_boundaries(boundary_data);
     face_reconstruction->init(face_reconstruction_input);
 
-    rhs_func = [this](StateView solution, StateView rhs, rtype t_stage) { calc_rhs(solution, rhs, t_stage); };
+    rhs_func = [this](State solution, State rhs, rtype t_stage) { calc_rhs(solution, rhs, t_stage); };
     check_nan = toml::find_or<bool>(input, "numerics", "check_nan", false);
     low_mach_cutoff = find_real_or(input, "numerics", "low_mach_cutoff", 0.1);
     if (!(low_mach_cutoff > 0.0)) {
@@ -671,12 +671,14 @@ void Solver::init_output() {
     std::vector<toml::value> outputs = toml::find<std::vector<toml::value>>(input, "write_data");
     for (const auto & output : outputs) {
         data_writers.push_back(std::make_unique<DataWriter>());
-        data_writers.back()->init(output, data, mesh);
+        data_writers.back()->init(output, data, mesh, restart_variables());
     }
 }
 
 void Solver::allocate_memory() {
+    const uint32_t n_species = species_names.size();
     conservatives = StateView("conservatives", mesh->n_cells);
+    species = SpeciesView("species", mesh->n_cells, n_species);
     primitives = Kokkos::View<rtype *[N_PRIMITIVE]>("primitives", mesh->n_cells);
     W_cells = Kokkos::View<rtype *[N_CONSERVATIVE]>("W_cells", mesh->n_cells);
     face_solution = Kokkos::View<rtype **[2][N_CONSERVATIVE]>("face_solution",
@@ -689,27 +691,30 @@ void Solver::allocate_memory() {
         viscous_gradient = make_vertex_gradient(make_gradient(*mesh, boundary_data, W_cells, viscous_gradients), *mesh);
     }
     h_conservatives = Kokkos::create_mirror_view(conservatives);
+    h_species = Kokkos::create_mirror_view(species);
     h_primitives = Kokkos::create_mirror_view(primitives);
     h_cfl_local = Kokkos::create_mirror_view(cfl_local);
 
     solution_vec.clear();
     rhs_vec.clear();
-    solution_vec.push_back(conservatives);
+    solution_vec.push_back(state());
     for (uint8_t i = 1; i < time_integrator->get_n_solution_vectors(); i++) {
-        solution_vec.push_back(StateView("solution", mesh->n_cells));
+        solution_vec.emplace_back("solution", mesh->n_cells, n_species);
     }
     for (uint8_t i = 0; i < time_integrator->get_n_rhs_vectors(); i++) {
-        rhs_vec.push_back(StateView("rhs", mesh->n_cells));
+        rhs_vec.emplace_back("rhs", mesh->n_cells, n_species);
     }
 }
 
 void Solver::copy_host_to_device() {
     Kokkos::deep_copy(conservatives, h_conservatives);
+    if (species.span() > 0) Kokkos::deep_copy(species, h_species);
     Kokkos::deep_copy(primitives, h_primitives);
 }
 
 void Solver::copy_device_to_host() {
     Kokkos::deep_copy(h_conservatives, conservatives);
+    if (species.span() > 0) Kokkos::deep_copy(h_species, species);
     Kokkos::deep_copy(h_primitives, primitives);
     Kokkos::deep_copy(h_cfl_local, cfl_local);
     if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) {
@@ -719,9 +724,12 @@ void Solver::copy_device_to_host() {
 
 void Solver::register_data() {
     data.clear();
-    data.reserve(CONSERVATIVE_NAMES.size() + PRIMITIVE_NAMES.size() + 2);
+    data.reserve(CONSERVATIVE_NAMES.size() + species_names.size() + PRIMITIVE_NAMES.size() + 2);
     for (size_t i = 0; i < CONSERVATIVE_NAMES.size(); i++) {
         data.push_back(Data(CONSERVATIVE_NAMES[i], Kokkos::subview(h_conservatives, Kokkos::ALL(), i)));
+    }
+    for (size_t k = 0; k < species_names.size(); k++) {
+        data.push_back(Data("RHOY_" + species_names[k], Kokkos::subview(h_species, Kokkos::ALL(), k)));
     }
     for (size_t i = 0; i < PRIMITIVE_NAMES.size(); i++) {
         data.push_back(Data(PRIMITIVE_NAMES[i], Kokkos::subview(h_primitives, Kokkos::ALL(), i)));
@@ -732,6 +740,12 @@ void Solver::register_data() {
         h_teno_sigma = Kokkos::create_mirror_view(teno->troubled);
         data.push_back(Data("TENO_SIGMA", h_teno_sigma));
     }
+}
+
+std::vector<std::string> Solver::restart_variables() const {
+    std::vector<std::string> names(CONSERVATIVE_NAMES.begin(), CONSERVATIVE_NAMES.end());
+    for (const auto & name : species_names) names.push_back("RHOY_" + name);
+    return names;
 }
 
 namespace {
@@ -998,7 +1012,7 @@ void Solver::update_primitives() {
 void Solver::calc_dt() {
     // Halo values are stale after the last stage of the previous step; the
     // first stage of the next one reuses them
-    halo.exchange(conservatives);
+    halo.exchange(state());
     halo_current = true;
     const rtype dt_cfl1 = calc_dt_cfl1();
     dt = use_cfl ? cfl * dt_cfl1 : dt_fixed;
@@ -1258,7 +1272,7 @@ struct FlowStatisticsFunctor {
 };
 
 std::array<rtype, 4> Solver::integrate_flow_statistics() {
-    halo.exchange(conservatives);
+    halo.exchange(state());
     update_boundary_states(t);
     const Euler phys = physics;
     StateView U = conservatives;

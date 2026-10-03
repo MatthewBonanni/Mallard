@@ -71,16 +71,28 @@ TEST(MPITest, HaloExchangeFillsEveryHaloCellFromItsOwner) {
     if (!solver.is_distributed()) GTEST_SKIP() << "needs more than one rank";
     const auto & dist = solver.get_distribution();
     const uint32_t n_local = solver.get_mesh()->n_cells;
-    Kokkos::View<rtype *[N_CONSERVATIVE]> U("U", n_local);
-    auto h_U = Kokkos::create_mirror_view(U);
-    for (uint32_t c = 0; c < n_local; c++) {
-        FOR_I_CONSERVATIVE h_U(c, i) = c < dist.n_owned ? dist.global_cell[c] + 0.25 * i : -1.0;
-    }
-    Kokkos::deep_copy(U, h_U);
-    HaloExchange(dist).exchange(U);
-    Kokkos::deep_copy(h_U, U);
-    for (uint32_t c = 0; c < n_local; c++) {
-        FOR_I_CONSERVATIVE EXPECT_EQ(h_U(c, i), dist.global_cell[c] + 0.25 * i) << "local cell " << c;
+    HaloExchange halo(dist);
+    // Flow block alone, then with species, through the same exchange object
+    for (const uint32_t n_species : {0u, 3u}) {
+        State U("U", n_local, n_species);
+        auto h_flow = Kokkos::create_mirror_view(U.flow);
+        auto h_species = Kokkos::create_mirror_view(U.species);
+        for (uint32_t c = 0; c < n_local; c++) {
+            const bool owned = c < dist.n_owned;
+            FOR_I_CONSERVATIVE h_flow(c, i) = owned ? dist.global_cell[c] + 0.25 * i : -1.0;
+            for (uint32_t k = 0; k < n_species; k++) h_species(c, k) = owned ? dist.global_cell[c] + 0.125 * k : -1.0;
+        }
+        Kokkos::deep_copy(U.flow, h_flow);
+        Kokkos::deep_copy(U.species, h_species);
+        halo.exchange(U);
+        Kokkos::deep_copy(h_flow, U.flow);
+        Kokkos::deep_copy(h_species, U.species);
+        for (uint32_t c = 0; c < n_local; c++) {
+            FOR_I_CONSERVATIVE EXPECT_EQ(h_flow(c, i), dist.global_cell[c] + 0.25 * i) << "local cell " << c;
+            for (uint32_t k = 0; k < n_species; k++) {
+                EXPECT_EQ(h_species(c, k), dist.global_cell[c] + 0.125 * k) << "local cell " << c;
+            }
+        }
     }
     std::set<uint64_t> ids(dist.global_cell.begin(), dist.global_cell.end());
     EXPECT_EQ(ids.size(), dist.global_cell.size());
@@ -148,7 +160,9 @@ TEST(MPITest, PeriodicRunsMatchSerialAcrossSeamsCutByThePartition) {
     const std::string walls = "[[boundaries]]\nname = \"top\"\ntype = \"symmetry\"\n"
                               "[[boundaries]]\nname = \"bottom\"\ntype = \"wall_adiabatic\"\n";
     const std::string teno = periodic_box("cartesian", "type = \"TENO\"\norder = 5\n", EULER, "[\"x\", \"y\"]", none, 15);
-    if (comm::size() > 1) EXPECT_GT(seam_faces_cut_by_partition(teno), 0u);
+    if (comm::size() > 1) {
+        EXPECT_GT(seam_faces_cut_by_partition(teno), 0u);
+    }
     expect_matches_serial(teno);
     expect_matches_serial(periodic_box("cartesian_tri", "type = \"TENO\"\norder = 4\n", EULER, "[\"x\"]", walls, 10));
     expect_matches_serial(periodic_box("cartesian_tri", "type = \"MUSCL\"\n", NS, "[\"x\", \"y\"]", none, 20));
@@ -171,7 +185,7 @@ std::string io_dir() {
     return (std::filesystem::temp_directory_path() / "mallard_mpi_io").string();
 }
 
-std::string restart_case(const std::string & init, uint32_t n_steps, const std::string & output) {
+std::string restart_case(uint32_t n_steps, const std::string & output) {
     return box_input("cartesian_tri", "type = \"MUSCL\"\n", EULER,
                      bcs("type = \"extrapolation\"\n", "type = \"symmetry\"\n", "type = \"wall_adiabatic\"\n",
                          "type = \"extrapolation\"\n"),
@@ -212,18 +226,18 @@ TEST(MPITest, RestartFilesDoNotDependOnTheRankCount) {
     // Uninterrupted serial reference
     Solver reference;
     reference.set_distributed(false);
-    reference.init(parse_toml(restart_case(init, 20, "")));
+    reference.init(parse_toml(restart_case(20, "")));
     reference.run();
     const auto U_ref = gather(reference);
 
     // Written by all ranks at step 10, continued by all ranks
     {
         Solver first;
-        first.init(parse_toml(restart_case(init, 10, writer)));
+        first.init(parse_toml(restart_case(10, writer)));
         first.run();
     }
     comm::barrier();
-    std::string input = restart_case(init, 20, "");
+    std::string input = restart_case(20, "");
     input.replace(input.find("[initialize]\n") + 13, init.size(), from(dir + "/r_000010.restart"));
     Solver second;
     second.init(parse_toml(input));
@@ -245,7 +259,7 @@ TEST(MPITest, EveryCellIsInExactlyOneOutputPiece) {
     if (comm::is_root()) std::filesystem::remove_all(dir);
     comm::barrier();
     Solver solver;
-    solver.init(parse_toml(restart_case(BLAST, 2, "[[write_data]]\nprefix = \"" + dir + "/f\"\nformat = \"vtu\"\n"
+    solver.init(parse_toml(restart_case(2, "[[write_data]]\nprefix = \"" + dir + "/f\"\nformat = \"vtu\"\n"
                                                   "interval = 2\nvariables = [\"RHO\"]\n")));
     solver.run();
     comm::barrier();
