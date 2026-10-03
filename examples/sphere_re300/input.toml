@@ -1,0 +1,94 @@
+# Flow past a sphere at Re = 300, Mach 0.2 (3D build): periodic shedding of
+# hairpin vortices from a wake with one plane of symmetry.
+#
+# Generate the mesh first:
+#   python ../../tools/make_sphere_re300_mesh.py sphere.msh
+# Nondimensionalization: sphere diameter 1, free-stream density and sound
+# speed 1, so U = M = 0.2 and mu = U D / Re.
+
+[run]
+t_stop = 1200.0
+cfl = 0.8
+
+[mesh]
+type = "file"
+filename = "sphere.msh"
+
+[initialize]
+type = "analytical"
+rho = "1.0"
+# Potential flow around the sphere, plus a transverse kick behind it that
+# picks the x-y plane as the plane of symmetry of the wake
+u = ["0.2 * (1 + 0.0625 / (x^2 + y^2 + z^2)^1.5 - 0.1875 * x^2 / (x^2 + y^2 + z^2)^2.5)",
+     "-0.0375 * x * y / (x^2 + y^2 + z^2)^2.5 + 0.04 * exp(-((x - 1.5)^2 + y^2 + z^2))",
+     "-0.0375 * x * z / (x^2 + y^2 + z^2)^2.5"]
+p = "0.7142857142857143"
+
+[[boundaries]]
+name = "sphere"
+type = "wall_adiabatic"
+
+[[boundaries]]
+name = "inflow"
+type = "farfield"
+u = [0.2, 0.0, 0.0]
+p = 0.7142857142857143
+T = 0.7142857142857143
+
+[[boundaries]]
+name = "lateral"
+type = "farfield"
+u = [0.2, 0.0, 0.0]
+p = 0.7142857142857143
+T = 0.7142857142857143
+
+[[boundaries]]
+name = "outflow"
+type = "farfield"
+u = [0.2, 0.0, 0.0]
+p = 0.7142857142857143
+T = 0.7142857142857143
+
+[numerics]
+riemann_solver = "HLLC"
+time_integrator = "SSPRK3"
+check_nan = true
+
+[numerics.face_reconstruction]
+type = "TENO"
+order = 3
+
+[physics]
+type = "navier_stokes"
+gamma = 1.4
+p_ref = 0.7142857142857143
+T_ref = 0.7142857142857143
+rho_ref = 1.0
+mu = 6.666666666666667e-4
+Pr = 0.72
+
+[output]
+check_interval = 1000
+
+[[forces]]
+zone = "sphere"
+interval = 20
+file = "./solut/forces_sphere.csv"
+
+[[write_data]]
+prefix = "./solut/sphere"
+format = "vtu"
+time_interval = 100.0
+variables = ["RHO", "U", "P"]
+
+[[write_data]]
+prefix = "./solut/wall"
+format = "vtu"
+geometry = "sphere"
+time_interval = 5.0
+variables = ["P"]
+
+[[write_data]]
+prefix = "./restart/sphere"
+format = "restart"
+interval = 20000
