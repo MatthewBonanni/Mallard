@@ -1488,19 +1488,16 @@ struct TENOFunctor {
         U[N_DIM + 1] = W_c[N_DIM + 1] / (gamma - 1.0) + 0.5 * W_c[0] * dot<N_DIM>(W_c + 1, W_c + 1);
     }
 
+    template <uint8_t N>
     KOKKOS_INLINE_FUNCTION
-    rtype smoothness(const rtype coeffs[][N_CONSERVATIVE], const uint8_t n, const uint8_t var,
-                     const uint32_t i_cell) const {
+    rtype smoothness(const rtype coeffs[][N_CONSERVATIVE], const uint8_t var, const uint32_t i_cell) const {
         rtype si = 0.0;
-        for (uint8_t l = 0; l < n; l++) {
-            // Entry (l, m) is stored at upper_index(min(l, m), max(l, m), NK)
+        for (uint8_t l = 0; l < N; l++) {
             rtype row = 0.0;
-            uint16_t k = l;
-            for (uint8_t m = 0; m < l; m++) {
-                row += si_matrix(i_cell, k) * coeffs[m][var];
-                k += NK - m - 1;
+            for (uint8_t m = 0; m < N; m++) {
+                row += si_matrix(i_cell, (l <= m) ? teno::upper_index(l, m, NK) : teno::upper_index(m, l, NK)) *
+                       coeffs[m][var];
             }
-            for (uint8_t m = l; m < n; m++) row += si_matrix(i_cell, k++) * coeffs[m][var];
             si += coeffs[l][var] * row;
         }
         return si;
@@ -1750,12 +1747,12 @@ struct TENOFunctor {
         for (uint8_t var = 0; var < N_CONSERVATIVE; var++) {
             // gamma_k = 1 / (SI_k + eps)^6, normalized by the largest one so
             // that the weights cannot overflow (even in single precision)
-            const rtype si_K = smoothness(cK, NK, var, i_cell) + eps;
+            const rtype si_K = smoothness<NK>(cK, var, i_cell) + eps;
             rtype si_small[teno::MAX_FACES] = {};
             rtype si_min = si_K;
             for (uint8_t s = 0; s < n_faces; s++) {
                 if (!valid[s]) continue;
-                si_small[s] = smoothness(cS[s], teno::NK_SMALL, var, i_cell) + eps;
+                si_small[s] = smoothness<teno::NK_SMALL>(cS[s], var, i_cell) + eps;
                 si_min = Kokkos::fmin(si_min, si_small[s]);
             }
             const rtype gK = Kokkos::pow(si_min / si_K, 6.0);
