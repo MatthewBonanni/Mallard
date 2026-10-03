@@ -18,6 +18,7 @@ add_library(MallardCore STATIC
     physics/physics.cpp
     solver/solver.cpp
     solver/solver_initialize.cpp
+    solver/solver_rebalance.cpp
     solver/solver_rhs.cpp
     io/data_writer.cpp
     parallel/comm.cpp

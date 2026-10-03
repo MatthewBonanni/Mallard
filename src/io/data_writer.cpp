@@ -89,7 +89,7 @@ void DataWriter::init(const toml::value & input,
     }
     format = it->second;
 
-    std::vector<std::string> variables;
+    variables.clear();
     if (format == DataFormat::RESTART) {
         if (restart_variables.empty()) {
             variables.assign(CONSERVATIVE_NAMES.begin(), CONSERVATIVE_NAMES.end());
@@ -105,12 +105,27 @@ void DataWriter::init(const toml::value & input,
     if (variables.empty()) {
         throw std::runtime_error("DataWriter: No variables specified.");
     }
+    geometry = toml::find_or<std::string>(input, "geometry", "all");
+    if (geometry != "all" && format != DataFormat::VTU) {
+        throw std::runtime_error("DataWriter: geometry can only be set for vtu output.");
+    }
+    surface = geometry != "all";
+    bind(data, mesh_in);
+
+    const std::filesystem::path parent = std::filesystem::path(prefix).parent_path();
+    if (!parent.empty()) {
+        std::filesystem::create_directories(parent);
+    }
+}
+
+void DataWriter::bind(std::vector<Data> & data, std::shared_ptr<Mesh> mesh_in) {
     auto find_data = [&](const std::string & name) -> const Data * {
         for (const auto & data_var : data) {
             if (data_var.name() == name) return &data_var;
         }
         return nullptr;
     };
+    fields.clear();
     for (const auto & var : variables) {
         Field field{var, {}};
         if (const Data * scalar = find_data(var)) {
@@ -130,26 +145,17 @@ void DataWriter::init(const toml::value & input,
     }
     this->mesh = mesh_in;
 
-    geometry = toml::find_or<std::string>(input, "geometry", "all");
-    if (geometry != "all") {
-        if (format != DataFormat::VTU) {
-            throw std::runtime_error("DataWriter: geometry can only be set for vtu output.");
-        }
+    geometry_faces.clear();
+    if (surface) {
         FaceZone * zone = mesh->get_face_zone(geometry);
         if (comm::allreduce(uint32_t(zone != nullptr), comm::Op::SUM) == 0) {
             throw std::runtime_error("DataWriter: unknown geometry: " + geometry + ".");
         }
-        surface = true;
         // Each rank writes the faces of its owned cells
         for (uint32_t i = 0; zone && i < zone->n_faces(); i++) {
             const uint32_t f = zone->h_faces(i);
             if (static_cast<uint32_t>(mesh->h_cells_of_face(f, 0)) < mesh->n_owned()) geometry_faces.push_back(f);
         }
-    }
-
-    const std::filesystem::path parent = std::filesystem::path(prefix).parent_path();
-    if (!parent.empty()) {
-        std::filesystem::create_directories(parent);
     }
 }
 

@@ -190,6 +190,26 @@ TEST(MPITest, BoundaryConditionsSurviveTheHaloRebuild) {
         10));
 }
 
+TEST(MPITest, RebalancedRunsMatchSerial) {
+    const std::string walls = bcs(
+        "type = \"dirichlet\"\nrho = \"1.0\"\nu = [\"0.3\", \"0.0\"]\np = \"1.0 + 0.1 * sin(6 * y) * sin(20 * t)\"\n",
+        "type = \"p_out_average\"\np = 1.0\n", "type = \"wall_adiabatic\"\n", "type = \"symmetry\"\n");
+    for (const char * partitioner : {"hilbert", "graph"}) {
+        if (std::string(partitioner) == "graph" && !have_graph_partitioner()) continue;
+        SCOPED_TRACE(partitioner);
+        const std::string parallel = std::string("[parallel]\nrebalance = true\npartitioner = \"") + partitioner + "\"\n";
+        expect_rebalanced_run_matches_serial(
+            box_input("cartesian", "type = \"TENO\"\norder = 5\n", EULER, walls, 10) + parallel, 10);
+    }
+    expect_rebalanced_run_matches_serial(
+        box_input("cartesian_tri", "type = \"MUSCL\"\n", NS, walls, 10) + "[parallel]\nrebalance = true\n", 10);
+    // Stencils across periodic seams the partition cuts
+    expect_rebalanced_run_matches_serial(
+        periodic_box("cartesian_tri", "type = \"TENO\"\norder = 4\n", EULER, "[\"x\", \"y\"]", "", 10) +
+            "rebalance = true\n",
+        10);
+}
+
 namespace {
 
 std::string io_dir() {

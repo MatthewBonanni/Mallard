@@ -438,6 +438,16 @@ std::vector<uint64_t> DistributedMesh::owned_to_block(const std::vector<uint64_t
     return values;
 }
 
+std::vector<int> DistributedMesh::owners_of_owned(const std::vector<int> & new_owner) const {
+    const int p = comm::size();
+    check_all(new_owner.size() == block.n_cells() ? "" : "DistributedMesh::owners_of_owned: one owner per block cell.");
+    std::vector<std::vector<uint64_t>> send(p);
+    for (uint32_t c = 0; c < block.n_cells(); c++) send[owner[c]].push_back(uint64_t(new_owner[c]));
+    // Ranks hold increasing ranges of global ids, so the owners arrive in global order
+    const std::vector<uint64_t> received = comm::exchange(std::move(send)).data;
+    return std::vector<int>(received.begin(), received.end());
+}
+
 void DistributedMesh::grow_layer() {
     const int p = comm::size();
     const uint8_t layer = layers + 1;
