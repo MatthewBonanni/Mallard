@@ -203,12 +203,12 @@ void check_mixed_mesh(const std::string & file) {
         rtype closure[N_DIM] = {};
         for (uint32_t k = 0; k < mesh.h_n_faces_of_cell(c); k++) {
             const uint32_t f = mesh.h_face_of_cell(c, k);
-            const rtype sign = (mesh.h_cells_of_face(f, 0) == (int32_t)c) ? 1.0 : -1.0;
+            const rtype sign = (mesh.h_cells_of_face(f, 0) == static_cast<int32_t>(c)) ? 1.0 : -1.0;
             FOR_I_DIM closure[i] += sign * mesh.h_face_normals(f, i);
         }
         FOR_I_DIM EXPECT_NEAR(closure[i], 0.0, 1e-14) << "cell " << c;
     }
-    EXPECT_NEAR(total, 1.0 + 0.5 + 1.0 / 3.0 + 0.1, 1e-14);
+    EXPECT_NEAR(total, 1.0 + 0.5 + 1.0 / 3.0 + 0.1, roundoff(1e-14));
 }
 
 /**
@@ -310,7 +310,7 @@ TEST(IO3DTest, VolumeOutputFollowsVTKCellConventions) {
     ASSERT_EQ(types.size(), mesh->n_cells);
     ASSERT_EQ(offsets.size(), mesh->n_cells);
     ASSERT_EQ(connectivity.size(), 4u + 5u + 6u + 8u);
-    EXPECT_EQ(offsets.back(), (int64_t)connectivity.size());
+    EXPECT_EQ(offsets.back(), static_cast<int64_t>(connectivity.size()));
 
     // VTK: the base face's right-hand normal points toward the opposite
     // node(s) for tetra (10), hexahedron (12) and pyramid (14), and away from
@@ -408,24 +408,22 @@ TEST(IO3DTest, RestartRoundTripCarriesAllConservatives) {
     EXPECT_EQ(restart.step, 7u);
     EXPECT_EQ(restart.t, 0.25);
     ASSERT_EQ(restart.n_cells, mesh->n_cells);
-    ASSERT_EQ(restart.conservatives.size(), 5u);
+    EXPECT_EQ(restart.names, names);
+    ASSERT_EQ(restart.fields.size(), 5u);
     for (uint32_t v = 0; v < 5; v++) {
-        for (uint32_t c = 0; c < mesh->n_cells; c++) EXPECT_EQ(restart.conservatives[v][c], fields.values(c, v));
+        for (uint32_t c = 0; c < mesh->n_cells; c++) EXPECT_EQ(restart.fields[v][c], fields.values(c, v));
     }
 
-    // The same file with only four variables, as a 2D run writes, is refused
-    std::string bytes;
-    {
-        std::ifstream in(dir + "/r_000007.restart", std::ios::binary);
-        bytes.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
-    }
-    const uint64_t n_vars_2d = 4;
-    std::memcpy(bytes.data() + 16 + 4 + 4 + 8, &n_vars_2d, sizeof(n_vars_2d));
-    bytes.resize(bytes.size() - mesh->n_cells * sizeof(rtype));
-    std::ofstream(dir + "/r2d.restart", std::ios::binary) << bytes;
+    // A file holding a 2D run's variables is refused
+    const std::vector<std::string> names_2d = {"RHO", "RHOU_X", "RHOU_Y", "RHOE"};
+    CellFields fields_2d(mesh->n_cells, names_2d);
+    DataWriter writer_2d;
+    writer_2d.init(parse_toml("prefix = \"" + dir + "/r2d\"\nformat = \"restart\"\ninterval = 7\n"), fields_2d.data,
+                   mesh, names_2d);
+    writer_2d.write(7, 0.25);
     try {
-        read_restart(dir + "/r2d.restart");
-        ADD_FAILURE() << "a 4-variable restart file was accepted";
+        read_restart(dir + "/r2d_000007.restart");
+        ADD_FAILURE() << "a 2D restart file was accepted";
     } catch (const std::runtime_error & e) {
         EXPECT_NE(std::string(e.what()).find("Mallard_DIM"), std::string::npos) << e.what();
     }

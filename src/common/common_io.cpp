@@ -11,11 +11,10 @@
 
 #include "common_io.h"
 
-#include <iostream>
 
 std::string endianness() {
     int i = 1;
-    char * c = (char *) &i;
+    char * c = reinterpret_cast<char *>(&i);
     if (*c == 1) {
         return "LittleEndian";
     } else {
@@ -29,10 +28,4 @@ std::string vtk_float_type() {
 #else
     return "Float32";
 #endif
-}
-
-void print_warning(const std::string & message) {
-    std::cout << WARN_SEPARATOR << std::endl;
-    std::cout << "WARNING: " << message << std::endl;
-    std::cout << WARN_SEPARATOR << std::endl;
 }

@@ -22,6 +22,7 @@
 
 #include "mesh.h"
 #include "boundary.h"
+#include "test_utils.h"
 
 inline toml::value parse_toml(const std::string & str) {
     return toml::parse_str(str);
@@ -90,9 +91,9 @@ Kokkos::View<rtype *[N_CONSERVATIVE]>::host_mirror_type cell_averages_3d(const M
                         const double wt = gw[i] * gw[j] * gw[k] * (1.0 - g[i]) * (1.0 - g[i]) * (1.0 - g[j]) * det;
                         double p[3];
                         for (int d = 0; d < 3; d++) p[d] = t[0][d] + u * e[0][d] + v * e[1][d] + w * e[2][d];
-                        double val[N_CONSERVATIVE];
+                        double val[N_CONSERVATIVE] = {};
                         f(p[0], p[1], p[2], val);
-                        FOR_I_CONSERVATIVE sum[i] += wt * val[i];
+                        for (int q = 0; q < N_CONSERVATIVE; q++) sum[q] += wt * val[q];
                         vol += wt;
                     }
                 }
@@ -144,17 +145,17 @@ Kokkos::View<rtype *[N_CONSERVATIVE]>::host_mirror_type cell_averages(const Mesh
         const uint32_t n0 = mesh.h_node_of_cell(c, 0);
         for (uint32_t k = 1; k + 1 < mesh.h_n_nodes_of_cell(c); k++) {
             const uint32_t n1 = mesh.h_node_of_cell(c, k), n2 = mesh.h_node_of_cell(c, k + 1);
-            const double x0 = mesh.h_node_coords(n0, 0), y0 = mesh.h_node_coords(n0, 1);
-            const double ax = mesh.h_node_coords(n1, 0) - x0, ay = mesh.h_node_coords(n1, 1) - y0;
-            const double bx = mesh.h_node_coords(n2, 0) - x0, by = mesh.h_node_coords(n2, 1) - y0;
+            const double x0 = double(mesh.h_node_coords(n0, 0)), y0 = double(mesh.h_node_coords(n0, 1));
+            const double ax = double(mesh.h_node_coords(n1, 0)) - x0, ay = double(mesh.h_node_coords(n1, 1)) - y0;
+            const double bx = double(mesh.h_node_coords(n2, 0)) - x0, by = double(mesh.h_node_coords(n2, 1)) - y0;
             const double det = std::abs(ax * by - ay * bx);
             for (int i = 0; i < 8; i++) {
                 for (int j = 0; j < 8; j++) {
                     const double s = g[i], t = g[j] * (1.0 - g[i]);
                     const double w = gw[i] * gw[j] * (1.0 - g[i]) * det;
-                    double v[N_CONSERVATIVE];
+                    double v[N_CONSERVATIVE] = {};
                     f(x0 + s * ax + t * bx, y0 + s * ay + t * by, v);
-                    FOR_I_CONSERVATIVE sum[i] += w * v[i];
+                    for (int q = 0; q < N_CONSERVATIVE; q++) sum[q] += w * v[q];
                     area += w;
                 }
             }

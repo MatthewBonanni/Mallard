@@ -33,7 +33,7 @@ FaceKey face_key(const Nodes & nodes, size_t n) {
     FaceKey key;
     key.fill(NO_NODE);
     for (size_t k = 0; k < n; k++) key[k] = nodes[k];
-    std::sort(key.begin(), key.begin() + n);
+    std::sort(key.begin(), key.end());  // the NO_NODE padding sorts last
     return key;
 }
 
@@ -83,7 +83,7 @@ void Mesh::init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & 
                 const auto & b = nodes[c[(k + 1) % c.size()]];
                 area2 += a[0] * b[1] - b[0] * a[1];
             }
-            if (area2 < 0.0) {
+            if (area2 < 0.0_r) {
                 cell_nodes.insert(cell_nodes.end(), c.rbegin(), c.rend());
             } else {
                 cell_nodes.insert(cell_nodes.end(), c.begin(), c.end());
@@ -111,8 +111,9 @@ void Mesh::init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & 
         }
     };
 
-    // Half faces sorted by node set pair up into faces; faces are numbered in
-    // the order cells first reach them, and ordered as that first cell sees them
+    // Half faces sorted by node set pair up into faces. Faces are numbered in the
+    // order cells reach them, visiting cells by global id, and ordered as the
+    // first cell sees them, so every rank count orients them alike
     std::vector<std::pair<FaceKey, uint32_t>> halves(n_half);
     for (uint32_t c = 0; c < n_cells; c++) {
         for (uint32_t h = cell_face_offsets[c]; h < cell_face_offsets[c + 1]; h++) {
@@ -133,13 +134,13 @@ void Mesh::init_from_connectivity(const std::vector<std::array<rtype, N_DIM>> & 
         }
         i = j;
     }
-    std::vector<uint32_t> cell_faces(n_half), face_node_offsets{0}, face_nodes;
+    std::vector<uint32_t> cell_faces(n_half, NO_NODE), face_node_offsets{0}, face_nodes;
     std::vector<std::array<int32_t, 2>> face_cells;
     std::vector<uint8_t> face_shifts;
     std::vector<uint32_t> other_nodes;
-    for (uint32_t c = 0, h = 0; c < n_cells; c++) {
-        for (; h < cell_face_offsets[c + 1]; h++) {
-            if (partner[h] != NO_NODE && partner[h] < h) {
+    for (uint32_t c : cells_by_global_id()) {
+        for (uint32_t h = cell_face_offsets[c]; h < cell_face_offsets[c + 1]; h++) {
+            if (partner[h] != NO_NODE && cell_faces[partner[h]] != NO_NODE) {
                 const uint32_t f = cell_faces[partner[h]];
                 cell_faces[h] = f;
                 if (face_cells[f][0] == int32_t(c)) {
@@ -277,10 +278,10 @@ void Mesh::allocate_and_fill(const std::vector<std::array<rtype, N_DIM>> & nodes
     copy_csr(face_node_offsets, face_nodes, nodes_of_face, offsets_nodes_of_face, h_nodes_of_face,
              h_offsets_nodes_of_face, "nodes_of_face");
 
-    auto add_zone = [&](const std::string & name, FaceZoneType type, const std::vector<uint32_t> & faces) {
+    auto add_zone = [&](const std::string & name, FaceZoneType zone_type, const std::vector<uint32_t> & faces) {
         FaceZone zone;
         zone.set_name(name);
-        zone.set_type(type);
+        zone.set_type(zone_type);
         zone.faces = Kokkos::View<uint32_t *>("zone_" + name, faces.size());
         zone.h_faces = Kokkos::create_mirror_view(zone.faces);
         for (size_t i = 0; i < faces.size(); i++) zone.h_faces(i) = faces[i];
@@ -540,7 +541,7 @@ MeshBlock read_gmsh_block(const std::string & filename) {
     }
     for (uint64_t n = block.first_node; n < block_begin(data.nodes.size(), r + 1, p); n++) {
         std::array<double, N_DIM> x;
-        FOR_I_DIM x[i] = data.nodes[n][i];
+        FOR_I_DIM x[i] = double(data.nodes[n][i]);
         block.node_coords.push_back(x);
     }
     // Zones numbered in order of first appearance, the same on every rank

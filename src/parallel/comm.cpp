@@ -12,6 +12,7 @@
 #include "comm.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -78,6 +79,14 @@ int size() {
 }
 
 void barrier() { check(MPI_Barrier(MPI_COMM_WORLD), "MPI_Barrier"); }
+
+void abort(int code) {
+    int initialized = 0, finalized = 0;
+    MPI_Initialized(&initialized);
+    MPI_Finalized(&finalized);
+    if (initialized && !finalized) MPI_Abort(MPI_COMM_WORLD, code);
+    std::exit(code);
+}
 
 template <typename T>
 void allreduce(std::span<T> data, Op op) {
@@ -166,6 +175,8 @@ int rank() { return 0; }
 int size() { return 1; }
 void barrier() {}
 
+void abort(int code) { std::exit(code); }
+
 template <typename T>
 void allreduce(std::span<T>, Op) {}
 
@@ -201,6 +212,7 @@ template std::vector<std::vector<uint64_t>> alltoallv(const std::vector<std::vec
 template std::vector<int32_t> allgatherv(const std::vector<int32_t> &);
 template std::vector<uint64_t> allgatherv(const std::vector<uint64_t> &);
 template std::vector<double> allgatherv(const std::vector<double> &);
+template std::vector<float> allgatherv(const std::vector<float> &);
 template std::vector<std::vector<double>> alltoallv(const std::vector<std::vector<double>> &);
 template std::vector<std::vector<float>> alltoallv(const std::vector<std::vector<float>> &);
 template Received<uint64_t> exchange(std::vector<std::vector<uint64_t>> &&);

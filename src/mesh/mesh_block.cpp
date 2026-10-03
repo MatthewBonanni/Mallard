@@ -50,7 +50,7 @@ MeshBlock cartesian_2d_block(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, MeshT
         const uint32_t i = g / (ny + 1), j = g % (ny + 1);
         std::array<rtype, 2> x = {i * dx, j * dy};
         if (kind == MeshType::WEDGE) x = wedge_node(x[0], x[1], Ly);
-        block.node_coords.push_back({x[0], x[1]});
+        block.node_coords.push_back({double(x[0]), double(x[1])});
     }
     for (uint64_t c = block.first_cell; c < block_begin(n_cells, r + 1, p); c++) {
         const uint64_t quad = tri ? c / 2 : c;
@@ -86,7 +86,8 @@ struct SlabLayout {
     uint32_t nx, ny, nz;
     std::vector<uint64_t> cells_before, apexes_before;  // per slab, prefix sums
 
-    SlabLayout(uint32_t nx, uint32_t ny, uint32_t nz, MeshType kind) : kind(kind), nx(nx), ny(ny), nz(nz) {
+    SlabLayout(uint32_t nx_in, uint32_t ny_in, uint32_t nz_in, MeshType kind_in)
+        : kind(kind_in), nx(nx_in), ny(ny_in), nz(nz_in) {
         cells_before.assign(nx + 1, 0);
         apexes_before.assign(nx + 1, 0);
         for (uint32_t i = 0; i < nx; i++) {
@@ -136,9 +137,9 @@ MeshBlock cartesian_3d_block(uint32_t nx, uint32_t ny, uint32_t nz, rtype Lx, rt
     };
     auto apex_coords = [&](uint32_t i, uint32_t j, uint32_t k) {
         std::array<rtype, 3> p{};
-        p[0] = Lx * (i + 0.5) / nx;
-        p[1] = Ly * (j + 0.5) / ny;
-        p[2] = Lz * (k + 0.5) / nz;
+        p[0] = Lx * (i + 0.5_r) / nx;
+        p[1] = Ly * (j + 0.5_r) / ny;
+        p[2] = Lz * (k + 0.5_r) / nz;
         return p;
     };
     // Pyramid apexes follow the grid nodes, one per pyramid block in (i, j, k) order
@@ -163,7 +164,7 @@ MeshBlock cartesian_3d_block(uint32_t nx, uint32_t ny, uint32_t nz, rtype Lx, rt
     for (uint64_t g = first_node; g < end_node; g++) {
         const auto p = coords(g);
         std::array<double, N_DIM> x;
-        FOR_I_DIM x[i] = p[i];
+        FOR_I_DIM x[i] = double(p[i]);
         block.node_coords.push_back(x);
     }
 
@@ -178,7 +179,7 @@ MeshBlock cartesian_3d_block(uint32_t nx, uint32_t ny, uint32_t nz, rtype Lx, rt
             for (int d = 0; d < 3; d++) {
                 for (int side = 0; side < 2; side++) {
                     bool on = true;
-                    for (uint8_t k : local) on = on && std::abs(coords(cell[k])[d] - side * L[d]) < 1e-12 * L[d];
+                    for (uint8_t k : local) on = on && std::abs(coords(cell[k])[d] - side * L[d]) < 1e-12_r * L[d];
                     if (!on) continue;
                     std::vector<uint64_t> fn;
                     for (uint8_t k : local) fn.push_back(cell[k]);
@@ -239,9 +240,9 @@ bool is_hdf5_mesh(const std::string & filename) {
 MeshBlock read_mesh_block(const toml::value & input) {
     const std::string type_str = toml::find_or<std::string>(input, "mesh", "type", "file");
     const auto it = MESH_TYPES.find(type_str);
-    if (it == MESH_TYPES.end()) throw std::runtime_error("Unknown mesh type: " + type_str + ".");
+    if (it == MESH_TYPES.end()) throw unknown_option(MESH_TYPES, "mesh.type", type_str);
     const MeshType type = it->second;
-    if (type == MeshType::FILE) {
+    if (type == MeshType::FROM_FILE) {
         const std::string filename = toml::find_or<std::string>(input, "mesh", "filename", "mesh.msh");
         return is_hdf5_mesh(filename) ? read_mesh_h5(filename) : read_gmsh_block(filename);
     }
@@ -283,7 +284,7 @@ constexpr int VERSION = 1;
 /** @brief Owns an HDF5 identifier. */
 class Handle {
     public:
-        Handle(hid_t id, herr_t (*close)(hid_t), const std::string & what) : id(id), close(close) {
+        Handle(hid_t id_in, herr_t (*close_in)(hid_t), const std::string & what) : id(id_in), close(close_in) {
             if (id < 0) throw std::runtime_error("HDF5: " + what + " failed.");
         }
         ~Handle() { close(id); }

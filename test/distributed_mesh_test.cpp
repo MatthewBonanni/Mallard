@@ -137,18 +137,19 @@ std::shared_ptr<Mesh> build_local_mesh_from_global(Mesh & global, const std::vec
                 continue;
             }
             std::vector<uint32_t> face_nodes;
-            for (uint32_t k = 0; k < global.h_n_nodes_of_face(f); k++) {
-                face_nodes.push_back(local_node.at(global.h_node_of_face(f, k)));
+            for (uint32_t j = 0; j < global.h_n_nodes_of_face(f); j++) {
+                face_nodes.push_back(local_node.at(global.h_node_of_face(f, j)));
             }
             boundary_faces.push_back({std::move(face_nodes), zone});
         }
     }
 
     auto local = std::make_shared<Mesh>();
-    local->init_from_connectivity(nodes, cells, boundary_faces);
-    local->n_owned_cells = dist.n_owned;
+    // Global ids first: they order the faces and neighbor lists like the serial mesh's
     local->h_global_cell_id = dist.global_cell;
     local->n_global_cells = n_global;
+    local->init_from_connectivity(nodes, cells, boundary_faces);
+    local->n_owned_cells = dist.n_owned;
     local->n_reconstructed_cells = std::count_if(dist.layer.begin(), dist.layer.end(), [](uint8_t l) { return l <= 1; });
     local->n_complete_cells =
         std::count_if(dist.layer.begin(), dist.layer.end(), [&](uint8_t l) { return l < halo_layers; });

@@ -257,12 +257,12 @@ TEST(MeshFileTest, JitteredMixedMeshSatisfiesInvariants) {
         rtype closure[N_DIM] = {0.0, 0.0};
         for (uint32_t k = 0; k < mesh.h_n_faces_of_cell(c); k++) {
             const uint32_t f = mesh.h_face_of_cell(c, k);
-            const rtype sign = (mesh.h_cells_of_face(f, 0) == (int32_t)c) ? 1.0 : -1.0;
+            const rtype sign = (mesh.h_cells_of_face(f, 0) == static_cast<int32_t>(c)) ? 1.0 : -1.0;
             FOR_I_DIM closure[i] += sign * mesh.h_face_normals(f, i);
         }
-        FOR_I_DIM EXPECT_NEAR(closure[i], 0.0, 1e-14);
+        FOR_I_DIM EXPECT_NEAR(closure[i], 0.0, roundoff(1e-14));
     }
-    EXPECT_NEAR(total, 1.0, 1e-13);
+    EXPECT_NEAR(total, 1.0, roundoff(1e-13));
 }
 
 TEST_P(MixedMesh, UniformFlowIsPreserved) {
@@ -275,9 +275,9 @@ TEST_P(MixedMesh, UniformFlowIsPreserved) {
     solver.update_primitives();
     solver.copy_device_to_host();
     for (uint32_t i = 0; i < solver.get_mesh()->n_cells; i++) {
-        EXPECT_NEAR(solver.h_conservatives(i, 0), 1.2, 1e-12);
-        EXPECT_NEAR(solver.h_primitives(i, 0), 0.4, 1e-12);
-        EXPECT_NEAR(solver.h_primitives(i, 2), 0.8, 1e-12);
+        EXPECT_NEAR(solver.h_conservatives(i, 0), 1.2, roundoff(1e-12));
+        EXPECT_NEAR(solver.h_primitives(i, 0), 0.4, roundoff(1e-12));
+        EXPECT_NEAR(solver.h_primitives(i, 2), 0.8, roundoff(1e-12));
     }
 }
 
@@ -291,8 +291,8 @@ TEST_P(MixedMesh, BlastInClosedBoxConservesMassAndEnergy) {
     const auto before = solver.integrate_conservatives();
     solver.run();
     const auto after = solver.integrate_conservatives();
-    EXPECT_NEAR(after[0], before[0], 1e-12);
-    EXPECT_NEAR(after[3], before[3], 1e-11);
+    EXPECT_NEAR(after[0], before[0], roundoff(1e-12));
+    EXPECT_NEAR(after[3], before[3], roundoff(1e-11));
 }
 
 INSTANTIATE_TEST_SUITE_P(MeshFile, MixedMesh, ::testing::Values("FO", "MUSCL", "TENO"));

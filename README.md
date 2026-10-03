@@ -1,5 +1,6 @@
 ![C++](https://img.shields.io/badge/C%2B%2B-20-blue)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL_v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.23112953.svg)](https://doi.org/10.5281/zenodo.23112953)
 
 ![logo_dark](./docs/images/mallard_dark.png#gh-dark-mode-only)
 ![logo_light](./docs/images/mallard_light.png#gh-light-mode-only)
@@ -29,6 +30,8 @@ Mallard is a high-order unstructured finite volume solver for the compressible E
 - Output to VTU (ParaView), with `.pvd` time series
 - Simple TOML input files
 
+The sources of every method and of the validation data are listed in [docs/references.md](docs/references.md).
+
 ## Building
 
 Mallard depends on [Kokkos](https://github.com/kokkos/kokkos) (5.x), [toml11](https://github.com/ToruNiina/toml11) and [exprtk](https://github.com/ArashPartow/exprtk), all included in this repository; Kokkos and toml11 are submodules.
@@ -51,8 +54,9 @@ Pick the Kokkos backend at configure time, for example `-DKokkos_ENABLE_OPENMP=O
 | `Mallard_USE_DOUBLE` | `ON` | Double precision (single precision otherwise) |
 | `Mallard_ENABLE_MPI` | `OFF` | Distributed memory with MPI: `mpirun -n N Mallard -i input.toml` splits the mesh between ranks; with generated meshes or HDF5 mesh files (`mallard-mesh-convert`) no rank ever holds the whole mesh, while Gmsh files are read whole by every rank |
 | `Mallard_GPU_AWARE_MPI` | `OFF` | With MPI on GPUs: hand device buffers to a CUDA-aware MPI instead of staging halos through host memory |
-| `Mallard_ENABLE_KAMINPAR` | `OFF` | With MPI: partition the mesh with the [dKaMinPar](https://github.com/KaHIP/KaMinPar) graph partitioner (fetched at configure time; needs oneTBB) instead of a Hilbert curve |
+| `Mallard_ENABLE_KAMINPAR` | `OFF` | With MPI: partition the mesh with the [dKaMinPar](https://github.com/KaHIP/KaMinPar) graph partitioner (fetched at configure time; needs oneTBB) instead of a Hilbert curve. With CUDA, configure with the host compiler (`-DCMAKE_CXX_COMPILER=g++`) instead of `nvcc_wrapper`: Kokkos then compiles the code that uses it through `nvcc_wrapper` itself, and dKaMinPar does not compile with nvcc |
 | `Mallard_ENABLE_HDF5` | `OFF` | HDF5 mesh files (parallel HDF5 with MPI, when available) and the `mallard-mesh-convert` tool |
+| `Mallard_WARNINGS_AS_ERRORS` | `OFF` | Treat compiler warnings in Mallard's own code as errors (on in CI) |
 | `BUILD_DOCS` | `OFF` | Doxygen documentation target |
 
 ## Running
@@ -83,6 +87,10 @@ python tools/animate.py examples/riemann_2d/solut riemann
 ## Contributing
 
 Mallard uses the [Google C++ Style Guide](https://google.github.io/styleguide/cppguide.html).
+
+## Citing
+
+If you use Mallard, please cite it ([doi:10.5281/zenodo.23112953](https://doi.org/10.5281/zenodo.23112953), or the DOI of the version you used on Zenodo) with the metadata in [CITATION.cff](CITATION.cff) (GitHub's "Cite this repository" button), and the papers behind the methods you use ([docs/references.md](docs/references.md)).
 
 ## License
 

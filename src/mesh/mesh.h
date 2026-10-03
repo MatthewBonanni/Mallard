@@ -24,7 +24,7 @@
 #include "zone.h"
 
 enum class MeshType {
-    FILE,
+    FROM_FILE,
     CARTESIAN,
     CARTESIAN_TRI,
     WEDGE,
@@ -35,7 +35,7 @@ enum class MeshType {
 };
 
 static const std::unordered_map<std::string, MeshType> MESH_TYPES = {
-    {"file", MeshType::FILE},
+    {"file", MeshType::FROM_FILE},
     {"cartesian", MeshType::CARTESIAN},
     {"cartesian_tri", MeshType::CARTESIAN_TRI},
     {"wedge", MeshType::WEDGE},
@@ -46,7 +46,7 @@ static const std::unordered_map<std::string, MeshType> MESH_TYPES = {
 };
 
 static const std::unordered_map<MeshType, std::string> MESH_NAMES = {
-    {MeshType::FILE, "file"},
+    {MeshType::FROM_FILE, "file"},
     {MeshType::CARTESIAN, "cartesian"},
     {MeshType::CARTESIAN_TRI, "cartesian_tri"},
     {MeshType::WEDGE, "wedge"},
@@ -377,6 +377,15 @@ class Mesh {
          */
         void init_wedge(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly);
 
+        /**
+         * @brief Global id of local cell i_cell (i_cell itself unless distributed).
+         *        Connectivity is ordered by global ids, so that every rank count
+         *        builds bitwise identical faces and stencils.
+         */
+        uint64_t h_global_cell(uint32_t i_cell) const {
+            return h_global_cell_id.empty() ? i_cell : h_global_cell_id[i_cell];
+        }
+
         uint32_t n_cells, n_nodes, n_faces;
         // Cells [0, n_owned()) are owned by this rank; the rest are halo cells
         uint32_t n_owned_cells = 0;
@@ -446,6 +455,9 @@ class Mesh {
         uint8_t shift_index(const std::array<int8_t, 3> & lattice);
     protected:
     private:
+        void init_box(uint32_t nx, uint32_t ny, rtype Lx, rtype Ly, bool triangles, bool wedge);
+        // Local cells in increasing global id: the first cell to visit a face becomes its cell 0
+        std::vector<uint32_t> cells_by_global_id() const;
         /**
          * @brief Positively oriented copy of 3D cells (Gmsh/VTK convention), as
          *        CSR offsets and node lists.
@@ -470,7 +482,7 @@ class Mesh {
                                         uint8_t n_order,
                                         std::vector<uint32_t> & neighbors) const;
 
-        MeshType type = MeshType::FILE;
+        MeshType type = MeshType::FROM_FILE;
         std::vector<CellZone> m_cell_zones;
         std::vector<FaceZone> m_face_zones;
 };

@@ -46,24 +46,25 @@ inline void expect_matches_serial(const std::string & input) {
     std::vector<double> count(n_global, 0.0);
     for (uint32_t c = 0; c < distributed.get_mesh()->n_owned(); c++) {
         const uint64_t g = distributed.is_distributed() ? dist.global_cell[c] : c;
-        FOR_I_CONSERVATIVE gathered[g * N_CONSERVATIVE + i] = distributed.h_conservatives(c, i);
+        FOR_I_CONSERVATIVE gathered[g * N_CONSERVATIVE + i] = double(distributed.h_conservatives(c, i));
         count[g] += 1.0;
     }
     comm::allreduce(std::span<double>(gathered), comm::Op::SUM);
     comm::allreduce(std::span<double>(count), comm::Op::SUM);
 
     EXPECT_EQ(distributed.get_step(), serial.get_step());
-    EXPECT_NEAR(distributed.get_time(), serial.get_time(), 1e-12 * serial.get_time());
+    EXPECT_EQ(distributed.get_time(), serial.get_time());
     double max_rel = 0.0;
     for (uint32_t g = 0; g < n_global; g++) {
         ASSERT_EQ(count[g], 1.0) << "cell " << g << " owned " << count[g] << " times";
         FOR_I_CONSERVATIVE {
-            const double ref = serial.h_conservatives(g, i);
+            const double ref = double(serial.h_conservatives(g, i));
             max_rel = std::max(max_rel, std::abs(gathered[g * N_CONSERVATIVE + i] - ref) / (std::abs(ref) + 1e-3));
         }
     }
-    // Ranks sum the same face fluxes in a different order: round-off only
-    EXPECT_LT(max_rel, 1e-11) << "on " << comm::size() << " ranks";
+    // Faces and stencils are ordered by global cell ids, so every rank count
+    // computes the same sums in the same order
+    EXPECT_EQ(max_rel, 0.0) << "on " << comm::size() << " ranks";
 }
 
 #endif // MPI_COMPARE_H

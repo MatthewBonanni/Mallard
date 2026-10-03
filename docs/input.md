@@ -110,7 +110,7 @@ take no `[[boundaries]]` entry.
 | `u` | `constant`: `[u_x, u_y]`; `analytical`: one expression in `x`, `y`, `z` per component |
 | `rho`, `p`, `T` | `constant`: `p` and `T`; `analytical`: exactly two of the three, as expressions in `x`, `y`, `z` |
 | `n_subdivisions` | (`analytical`) Resolution of the cell averages. 2D: each cell's triangles are split into `n_subdivisions`² sub-triangles (default 4). 3D: each of the cell's tetrahedra is integrated with a 64-point rule on each of `n_subdivisions`³ pieces (default 2) |
-| `file` | (`restart`) Restart file to resume from |
+| `file` | (`restart`) Restart file to resume from. Restart files list their variables by name (format version 2) and are read by name; files of version 1 (Mallard 0.3 and earlier) are still read |
 
 Expressions use [exprtk](https://www.partow.net/programming/exprtk/) syntax, e.g. `"x < 0.5 ? 1.0 : 0.125"`.
 
@@ -141,6 +141,7 @@ the zone's faces whose centers satisfy the expression.
 | `riemann_solver` | `Rusanov`, `HLL`, `HLLC` (default), `Roe`, or `RHLL` (rotated hybrid HLL-Roe, carbuncle-free) |
 | `time_integrator` | `FE`, `SSPRK3` (default) or `RK4` |
 | `check_nan` | Stop if the solution becomes non-finite |
+| `low_mach_cutoff` | Low-Mach correction of the convective flux: the velocity jump across each interior face is scaled by `z = min(1, max(M_L, M_R, low_mach_cutoff))` before the Riemann solver, so that upwind dissipation scales with the flow speed rather than the sound speed. Default 0.1; 1 disables it. See [`numerics/overview.md`](numerics/overview.md) |
 
 ### `[numerics.face_reconstruction]`
 
@@ -157,7 +158,7 @@ the zone's faces whose centers satisfy the expression.
 | `C_T` | (`TENO`) Fixed TENO cutoff; adaptive (1e-10 to 1e-6) if omitted |
 | `characteristic` | (`TENO`) Select stencils on characteristic variables, default true |
 | `max_condition` | (`TENO`) Stencils grow until the least-squares system's condition estimate is below this, default 1e8 |
-| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options |
+| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options (serial runs only). The file is large in 3D: about 50 KB per cell for order 5, e.g. 13 GB for 64^3 hexahedra |
 | `bound_preserving` | (`TENO`) Scale troubled-cell polynomials to keep density and pressure within the neighbors' range, default false |
 
 ## `[[forces]]`
@@ -176,8 +177,13 @@ Write the force of the fluid on a boundary zone to a CSV file
 
 Write domain integrals to a CSV file (`step, t, kinetic_energy, enstrophy,
 dilatation_squared, pressure_dilatation`): the integrals of `rho |u|^2 / 2`,
-`rho |omega|^2 / 2`, `(div u)^2` and `p div u`, with velocity gradients from
-the same least-squares reconstruction as the viscous fluxes. For decaying
+`rho |omega|^2 / 2`, `(div u)^2` and `p div u`. With TENO the velocity
+gradients are those of the reconstruction polynomials at the cell centroids
+(order-consistent: on the Taylor-Green vortex at 64^3 per octant they match
+spectral derivatives of the same field to about 1%); otherwise they are the
+second-order least-squares gradients of the viscous fluxes, which
+underestimate the enstrophy of under-resolved turbulence (by about 15% in
+that case). For decaying
 turbulence such as the Taylor-Green vortex, the kinetic energy dissipation
 rate is `-dE/dt` and its viscous part `2 mu * enstrophy / rho0`.
 
@@ -210,7 +216,18 @@ Used when Mallard runs on several MPI ranks (`mpirun -n N Mallard -i input.toml`
 
 | Key | Description |
 |---|---|
-| `check_interval` | Print solution ranges and timing every this many steps |
+| `check_interval` | Print a progress row every this many steps (default 1) |
+
+Each progress row shows the step, time `t`, time step `dt`, the fraction of the run done (by
+whichever of `n_steps`, `t_stop` and `t_wall_stop` comes first), the time-stepping wall time
+per step, the throughput in cell updates per second, the estimated time remaining, the minimum
+density and pressure, the maximum Mach number and, with TENO, the percentage of troubled cells.
+Files written appear as rows led by their step and time. The run ends with a summary of wall
+time (setup, time stepping, diagnostics, output) and average throughput.
+
+Only rank 0 prints, except for errors, which go to stderr from any rank and carry the rank in
+parallel runs. Output on a terminal is colored unless `NO_COLOR` is set (`CLICOLOR_FORCE=1`
+forces color, e.g. under `mpirun`); logs written to files are plain ASCII.
 
 ## `[[write_data]]`
 

@@ -13,7 +13,7 @@
 
 #include "input.h"
 
-#include <iostream>
+#include <algorithm>
 #include <string>
 #include <unordered_map>
 
@@ -34,12 +34,12 @@ static const std::unordered_map<std::string, InitType> INIT_TYPES = {
 };
 
 void Solver::init_solution() {
-    std::cout << "Initializing solution..." << std::endl;
     const std::string type_str = toml::find_or<std::string>(input, "initialize", "type", "constant");
     auto it = INIT_TYPES.find(type_str);
     if (it == INIT_TYPES.end()) {
-        throw std::runtime_error("Unknown initialization type: " + type_str + ".");
+        throw unknown_option(INIT_TYPES, "initialize.type", type_str);
     }
+    initial_state = type_str;
     if (it->second == InitType::CONSTANT) {
         init_solution_constant();
     } else if (it->second == InitType::ANALYTICAL) {
@@ -61,19 +61,36 @@ void Solver::init_solution_restart() {
     const bool distributed = mesh->n_global_cells > 0;
     RestartData restart = read_restart(file, distributed ? &mesh->h_global_cell_id : nullptr);
     const uint64_t n_expected = distributed ? mesh->n_global_cells : mesh->n_cells;
-    if (restart.n_cells != n_expected || restart.conservatives.size() != N_CONSERVATIVE) {
+    if (restart.n_cells != n_expected) {
         throw std::runtime_error("Restart file " + file + " does not match the mesh.");
     }
-    for (uint32_t i_cell = 0; i_cell < mesh->n_cells; ++i_cell) {
-        FOR_I_CONSERVATIVE h_conservatives(i_cell, i) = restart.conservatives[i][i_cell];
+    // Variables map by name: the flow block, then one RHOY_<name> per species
+    std::vector<std::string> expected = restart_variables();
+    for (const auto & name : restart.names) {
+        if (std::find(expected.begin(), expected.end(), name) == expected.end()) {
+            throw std::runtime_error("Restart file " + file + " has variable " + name + ", which this run does not " +
+                                     (name.rfind("RHOY_", 0) == 0 ? "transport." : "know."));
+        }
+    }
+    for (uint32_t v = 0; v < expected.size(); v++) {
+        const std::vector<rtype> * values = restart.find(expected[v]);
+        if (values == nullptr) {
+            throw std::runtime_error("Restart file " + file + " has no variable " + expected[v] + ".");
+        }
+        for (uint32_t i_cell = 0; i_cell < mesh->n_cells; ++i_cell) {
+            if (v < N_CONSERVATIVE) {
+                h_conservatives(i_cell, v) = (*values)[i_cell];
+            } else {
+                h_species(i_cell, v - N_CONSERVATIVE) = (*values)[i_cell];
+            }
+        }
     }
     step = restart.step;
     t = restart.t;
-    t_last_check = t;
     for (auto & writer : data_writers) {
         writer->resume(step, t);
     }
-    std::cout << "Restarted from " << file << " at step " << step << ", t = " << t << std::endl;
+    initial_state = "restart from " + file + " (step " + std::to_string(step) + ", t = " + logging::real(double(t)) + ")";
 }
 
 void Solver::init_solution_constant() {
@@ -173,22 +190,22 @@ void Solver::init_solution_analytical() {
 
     TriangleDunavant quad(5);
     const uint32_t n_quad = quad.h_weights.extent(0);
-    rtype weight_sum = 0.0;
-    for (uint32_t q = 0; q < n_quad; q++) weight_sum += quad.h_weights(q);
+    double weight_sum = 0.0;
+    for (uint32_t q = 0; q < n_quad; q++) weight_sum += double(quad.h_weights(q));
 
     for (uint32_t i_cell = 0; i_cell < mesh->n_cells; ++i_cell) {
         const uint32_t n_nodes = mesh->h_n_nodes_of_cell(i_cell);
-        rtype sum[N_CONSERVATIVE] = {};
-        rtype area_sum = 0.0;
+        double sum[N_CONSERVATIVE] = {};
+        double area_sum = 0.0;
         const uint32_t n0 = mesh->h_node_of_cell(i_cell, 0);
         for (uint32_t k = 1; k + 1 < n_nodes; k++) {
             const uint32_t n1 = mesh->h_node_of_cell(i_cell, k);
             const uint32_t n2 = mesh->h_node_of_cell(i_cell, k + 1);
-            const double v0[2] = {mesh->h_node_coords(n0, 0), mesh->h_node_coords(n0, 1)};
-            const double e1[2] = {(mesh->h_node_coords(n1, 0) - v0[0]) / n_sub,
-                                  (mesh->h_node_coords(n1, 1) - v0[1]) / n_sub};
-            const double e2[2] = {(mesh->h_node_coords(n2, 0) - v0[0]) / n_sub,
-                                  (mesh->h_node_coords(n2, 1) - v0[1]) / n_sub};
+            const double v0[2] = {double(mesh->h_node_coords(n0, 0)), double(mesh->h_node_coords(n0, 1))};
+            const double e1[2] = {(double(mesh->h_node_coords(n1, 0)) - v0[0]) / n_sub,
+                                  (double(mesh->h_node_coords(n1, 1)) - v0[1]) / n_sub};
+            const double e2[2] = {(double(mesh->h_node_coords(n2, 0)) - v0[0]) / n_sub,
+                                  (double(mesh->h_node_coords(n2, 1)) - v0[1]) / n_sub};
             const double sub_area = 0.5 * std::abs(e1[0] * e2[1] - e1[1] * e2[0]);
             for (uint32_t a = 0; a < n_sub; a++) {
                 for (uint32_t b = 0; a + b < n_sub; b++) {
@@ -210,14 +227,14 @@ void Solver::init_solution_analytical() {
                             }
                         }
                         for (uint32_t q = 0; q < n_quad; q++) {
-                            const double xi = quad.h_points(q, 0);
-                            const double eta = quad.h_points(q, 1);
+                            const double xi = double(quad.h_points(q, 0));
+                            const double eta = double(quad.h_points(q, 1));
                             rtype cons[N_CONSERVATIVE];
                             point_conservatives(o[0] + xi * d1[0] + eta * d2[0],
                                                 o[1] + xi * d1[1] + eta * d2[1],
                                                 0.0, cons);
-                            const rtype w = quad.h_weights(q) / weight_sum * sub_area;
-                            FOR_I_CONSERVATIVE sum[i] += w * cons[i];
+                            const double w = double(quad.h_weights(q)) / weight_sum * sub_area;
+                            FOR_I_CONSERVATIVE sum[i] += w * double(cons[i]);
                         }
                         area_sum += sub_area;
                     }
@@ -265,7 +282,7 @@ void Solver::init_cell_averages_3d(const uint32_t n_sub,
                     for (int d = 0; d < 3; d++) p[d] = tet[0][d] + l1 * e[0][d] + l2 * e[1][d] + l3 * e[2][d];
                     rtype cons[N_CONSERVATIVE];
                     f(p[0], p[1], p[2], cons);
-                    FOR_I_CONSERVATIVE sum[i] += weight * cons[i];
+                    FOR_I_CONSERVATIVE sum[i] += weight * double(cons[i]);
                     vol_sum += weight;
                 }
                 }
