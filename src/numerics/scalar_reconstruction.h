@@ -54,7 +54,7 @@ struct ScalarFaceValues {
     KOKKOS_INLINE_FUNCTION
     rtype value(const uint32_t c, const uint32_t j, const rtype * r) const {
         if (gradients.extent(0) == 0) return scalars(c, j);
-        rtype d = 0.0;
+        rtype d = 0.0_r;
         FOR_I_DIM d += gradients(c, j, i) * r[i];
         return scalars(c, j) + limiter(c) * d;
     }
@@ -97,7 +97,7 @@ class ScalarReconstruction {
         uint32_t n_species = 0;
         bool linear = false;
         LimiterType limiter_type = LimiterType::NONE;
-        rtype venkat_K = 5.0;
+        rtype venkat_K = 5.0_r;
         Kokkos::View<rtype ***, Kokkos::LayoutRight> gradients;
         Kokkos::View<rtype *> limiter;
 };

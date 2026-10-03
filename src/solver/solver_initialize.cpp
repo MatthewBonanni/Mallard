@@ -116,7 +116,7 @@ void Solver::init_solution_constant() {
         const std::vector<double> Y = mixture_model->mass_fractions(init, "initialize");
         rtype cons[N_CONSERVATIVE];
         std::vector<rtype> rhoY(species_names.size());
-        mixture_model->conservatives(p, T, u.data(), Y, cons, rhoY.data());
+        mixture_model->conservatives(static_cast<double>(p), static_cast<double>(T), u.data(), Y, cons, rhoY.data());
         for (uint32_t i_cell = 0; i_cell < mesh->n_cells; ++i_cell) {
             FOR_I_CONSERVATIVE h_conservatives(i_cell, i) = cons[i];
             for (size_t k = 0; k < rhoY.size(); k++) h_species(i_cell, k) = rhoY[k];

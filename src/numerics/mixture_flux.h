@@ -29,10 +29,10 @@ KOKKOS_INLINE_FUNCTION
 void low_mach_correction(rtype * W_l, rtype * W_r, const rtype gamma_l, const rtype gamma_r, const rtype M_cut) {
     const rtype M_l2 = dot<N_DIM>(W_l + 1, W_l + 1) * W_l[0] / (gamma_l * W_l[N_DIM + 1]);
     const rtype M_r2 = dot<N_DIM>(W_r + 1, W_r + 1) * W_r[0] / (gamma_r * W_r[N_DIM + 1]);
-    const rtype z = Kokkos::fmin(1.0, Kokkos::fmax(M_cut, Kokkos::sqrt(Kokkos::fmax(M_l2, M_r2))));
+    const rtype z = Kokkos::fmin(1.0_r, Kokkos::fmax(M_cut, Kokkos::sqrt(Kokkos::fmax(M_l2, M_r2))));
     FOR_I_DIM {
-        const rtype mean = 0.5 * (W_l[1 + i] + W_r[1 + i]);
-        const rtype half_jump = 0.5 * (W_l[1 + i] - W_r[1 + i]);
+        const rtype mean = 0.5_r * (W_l[1 + i] + W_r[1 + i]);
+        const rtype half_jump = 0.5_r * (W_l[1 + i] - W_r[1 + i]);
         W_l[1 + i] = mean + z * half_jump;
         W_r[1 + i] = mean - z * half_jump;
     }
@@ -82,8 +82,8 @@ struct MixtureFluxFunctor {
                 w_q = quad_weights(i_quad);
             } else {
                 w_q = face_weights(i_face, i_quad);
-                if (w_q == 0.0) {
-                    face_mdot(i_face, i_quad) = 0.0;
+                if (w_q == 0.0_r) {
+                    face_mdot(i_face, i_quad) = 0.0_r;
                     continue;
                 }
             }
@@ -96,7 +96,7 @@ struct MixtureFluxFunctor {
                 FOR_I_CONSERVATIVE W_r[i] = face_solution(i_face, i_quad, 1, i);
                 th_r[0] = face_thermo(i_face, i_quad, 1, 0);
                 th_r[1] = face_thermo(i_face, i_quad, 1, 1);
-                if (low_mach_cutoff < 1.0) low_mach_correction(W_l, W_r, th_l[0], th_r[0], low_mach_cutoff);
+                if (low_mach_cutoff < 1.0_r) low_mach_correction(W_l, W_r, th_l[0], th_r[0], low_mach_cutoff);
             } else {
                 boundaries.exterior_mixture(i_face, i_quad, n_quad, W_l, th_l, n_unit, W_cells, face_solution,
                                             face_thermo, cell_thermo, W_r, th_r);
@@ -108,7 +108,7 @@ struct MixtureFluxFunctor {
         }
 
         // Weights sum to 2 (Gauss-Legendre on [-1, 1] in 2D)
-        const rtype scale = 0.5 * face_area(i_face);
+        const rtype scale = 0.5_r * face_area(i_face);
         FOR_I_CONSERVATIVE face_flux(i_face, i) = -scale * flux[i];
     }
 };
@@ -162,7 +162,7 @@ struct SpeciesSlotFunctor {
             const bool boundary = values.cells_of_face(f, 1) < 0;
             rtype r[N_DIM];
             values.offset(c, f, side, r);
-            rtype out = 0.0, in = 0.0;  // A/2 sum_q w_q max(+-mdot_out, 0)
+            rtype out = 0.0_r, in = 0.0_r;  // A/2 sum_q w_q max(+-mdot_out, 0)
             uint8_t n_quad;
             if constexpr (N_DIM == 2) {
                 n_quad = static_cast<uint8_t>(quad_weights.extent(0));
@@ -177,10 +177,10 @@ struct SpeciesSlotFunctor {
                     w_q = face_weights(f, q);
                 }
                 const rtype m_out = side == 0 ? face_mdot(f, q) : -face_mdot(f, q);
-                out += w_q * Kokkos::fmax(m_out, 0.0);
-                in += w_q * Kokkos::fmax(-m_out, 0.0);
+                out += w_q * Kokkos::fmax(m_out, 0.0_r);
+                in += w_q * Kokkos::fmax(-m_out, 0.0_r);
             }
-            const rtype scale = 0.5 * face_area(f);
+            const rtype scale = 0.5_r * face_area(f);
             // First-order and MUSCL reconstructions have one point per face
             for (uint32_t k = 0; k < n_species; k++) {
                 slots(f, side, k) = scale * out * values.value(c, k, r);
@@ -205,9 +205,9 @@ struct SpeciesSumFunctor {
 
     KOKKOS_INLINE_FUNCTION
     void operator()(const uint32_t c) const {
-        const rtype inv_V = 1.0 / cell_volume(c);
+        const rtype inv_V = 1.0_r / cell_volume(c);
         for (uint32_t k = 0; k < n_species; k++) {
-            rtype sum = 0.0;
+            rtype sum = 0.0_r;
             for (uint32_t i = offsets_faces_of_cell(c); i < offsets_faces_of_cell(c + 1); i++) {
                 const uint32_t f = faces_of_cell(i);
                 const uint8_t side = (cells_of_face(f, 0) == static_cast<int32_t>(c)) ? 0 : 1;

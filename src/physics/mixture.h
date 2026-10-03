@@ -53,7 +53,7 @@ struct Mixture {
     void cell_state(const rtype * U, const rtype * rhoY, const rtype T_guess, rtype * W, rtype & gamma, rtype & e0,
                     rtype & T) const {
         constexpr uint8_t E = N_DIM + 1;
-        const double rho = U[0];
+        const double rho = static_cast<double>(U[0]);
         W[0] = U[0];
         double u2 = 0.0;
         FOR_I_DIM {
@@ -62,7 +62,7 @@ struct Mixture {
         }
         const double e = static_cast<double>(U[E]) / rho - 0.5 * u2 / (rho * rho);
         const PartialDensities y{rhoY, 1.0 / rho};
-        const double T_cell = thermo.T_from_e(e, y, T_guess);
+        const double T_cell = thermo.T_from_e(e, y, static_cast<double>(T_guess));
         const double R = thermo.gas_constant(y);
         const double cv = thermo.cp_mass(T_cell, y) - R;
         W[E] = static_cast<rtype>(rho * R * T_cell);

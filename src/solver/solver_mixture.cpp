@@ -50,7 +50,7 @@ struct MixtureCellFunctor {
         rtype gamma, e0, T;
         gas.cell_state(cons, rhoY_c, T_seed(c), W_c, gamma, e0, T);
         FOR_I_CONSERVATIVE W(c, i) = W_c[i];
-        const rtype inv_rho = 1.0 / cons[0];
+        const rtype inv_rho = 1.0_r / cons[0];
         for (uint32_t k = 0; k < gas.n_species; k++) scalars(c, k) = rhoY_c[k] * inv_rho;
         scalars(c, gas.n_species) = gamma;
         scalars(c, gas.n_species + 1) = e0;
@@ -80,7 +80,7 @@ struct MixtureTimeStepFunctor {
 
     KOKKOS_INLINE_FUNCTION
     void operator()(const uint32_t c, rtype & dt_min) const {
-        rtype sum = 0.0;
+        rtype sum = 0.0_r;
         for (uint32_t k = offsets_faces_of_cell(c); k < offsets_faces_of_cell(c + 1); k++) {
             const uint32_t f = faces_of_cell(k);
             rtype n_vec[N_DIM], n[N_DIM];
@@ -114,7 +114,7 @@ struct MixturePrimitivesFunctor {
         P(c, N_DIM) = W[N_DIM + 1];
         P(c, N_DIM + 1) = T;
         // h = e + p / rho, with e = p / (rho (gamma - 1)) + e0
-        P(c, N_DIM + 2) = W[N_DIM + 1] / W[0] * gamma / (gamma - 1.0) + e0;
+        P(c, N_DIM + 2) = W[N_DIM + 1] / W[0] * gamma / (gamma - 1.0_r) + e0;
     }
 };
 
@@ -130,7 +130,7 @@ struct TemperatureFunctor {
         rtype cons[N_CONSERVATIVE], W[N_CONSERVATIVE];
         FOR_I_CONSERVATIVE cons[i] = U(c, i);
         rtype gamma, e0, T;
-        gas.cell_state(cons, &rhoY(c, 0), 0.0, W, gamma, e0, T);
+        gas.cell_state(cons, &rhoY(c, 0), 0.0_r, W, gamma, e0, T);
         T_seed(c) = T;
     }
 };
@@ -172,11 +172,11 @@ struct MixtureDiagnosticsFunctor {
         FOR_I_CONSERVATIVE cons[i] = U(c, i);
         rtype gamma, e0, T;
         gas.cell_state(cons, &rhoY(c, 0), T_seed(c), W, gamma, e0, T);
-        rtype u2 = 0.0, sum_Y = 0.0;
+        rtype u2 = 0.0_r, sum_Y = 0.0_r;
         FOR_I_DIM u2 += W[1 + i] * W[1 + i];
         for (uint32_t k = 0; k < gas.n_species; k++) sum_Y += rhoY(c, k);
         const rtype values[6] = {W[0], W[N_DIM + 1], -Kokkos::sqrt(u2 * W[0] / (gamma * W[N_DIM + 1])), T, -T,
-                                 -Kokkos::fabs(sum_Y / W[0] - 1.0)};
+                                 -Kokkos::fabs(sum_Y / W[0] - 1.0_r)};
         for (int i = 0; i < 6; i++) m.v[i] = Kokkos::fmin(m.v[i], values[i]);
     }
 };
@@ -319,7 +319,7 @@ void Solver::update_primitives_mixture() {
 std::vector<rtype> Solver::integrate_species() {
     std::vector<rtype> total(species_names.size());
     for (uint32_t k = 0; k < total.size(); k++) {
-        rtype sum = 0.0;
+        rtype sum = 0.0_r;
         Kokkos::parallel_reduce("integrate_species", mesh->n_owned(),
                                 SpeciesIntegralFunctor{species, mesh->cell_volume, k}, sum);
         total[k] = sum;

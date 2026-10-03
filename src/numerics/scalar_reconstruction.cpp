@@ -66,9 +66,9 @@ struct ScalarLimiterFunctor {
             rtype n_vec[N_DIM], n[N_DIM];
             FOR_I_DIM n_vec[i] = face_normals(f, i);
             unit<N_DIM>(n_vec, n);
-            rtype d = 0.0;
+            rtype d = 0.0_r;
             FOR_I_DIM d += (face_coords(f, i) - cell_coords(c, i)) * n[i];
-            FOR_I_DIM dx[i] = 2.0 * d * n[i];
+            FOR_I_DIM dx[i] = 2.0_r * d * n[i];
         }
         return -1;
     }
@@ -87,17 +87,17 @@ struct ScalarLimiterFunctor {
 
     KOKKOS_INLINE_FUNCTION
     static rtype barth_jespersen(const rtype d_minus, const rtype d_max, const rtype d_min) {
-        if (d_minus > 0.0) return Kokkos::fmin(1.0, d_max / d_minus);
-        if (d_minus < 0.0) return Kokkos::fmin(1.0, d_min / d_minus);
-        return 1.0;
+        if (d_minus > 0.0_r) return Kokkos::fmin(1.0_r, d_max / d_minus);
+        if (d_minus < 0.0_r) return Kokkos::fmin(1.0_r, d_min / d_minus);
+        return 1.0_r;
     }
 
     KOKKOS_INLINE_FUNCTION
     static rtype venkatakrishnan(const rtype d_minus, const rtype d_max, const rtype d_min, const rtype eps2) {
-        if (d_minus == 0.0) return 1.0;
-        const rtype d_plus = (d_minus > 0.0) ? d_max : d_min;
-        return ((d_plus * d_plus + eps2) + 2.0 * d_minus * d_plus) /
-               (d_plus * d_plus + 2.0 * d_minus * d_minus + d_minus * d_plus + eps2);
+        if (d_minus == 0.0_r) return 1.0_r;
+        const rtype d_plus = (d_minus > 0.0_r) ? d_max : d_min;
+        return ((d_plus * d_plus + eps2) + 2.0_r * d_minus * d_plus) /
+               (d_plus * d_plus + 2.0_r * d_minus * d_minus + d_minus * d_plus + eps2);
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -108,7 +108,7 @@ struct ScalarLimiterFunctor {
             rtype dx[N_DIM];
             bool prescribed;
             neighbor(c, faces_of_cell(k), dx, prescribed);
-            const rtype w = 1.0 / dot<N_DIM>(dx, dx);
+            const rtype w = 1.0_r / dot<N_DIM>(dx, dx);
             for (uint8_t a = 0; a < N_DIM; a++) {
                 for (uint8_t b = 0; b < N_DIM; b++) M[a * N_DIM + b] += w * dx[a] * dx[b];
             }
@@ -117,12 +117,12 @@ struct ScalarLimiterFunctor {
         invert_matrix<N_DIM>(M, M_inv);
 
         const rtype h = (N_DIM == 2) ? Kokkos::sqrt(cell_volume(c)) : Kokkos::cbrt(cell_volume(c));
-        const rtype Kh3 = Kokkos::pow(venkat_K * h, 3.0);
+        const rtype Kh3 = Kokkos::pow(venkat_K * h, 3.0_r);
         const uint32_t n_scalars = n_species + 2;
         const rtype gamma_c = scalars(c, n_species);
         // Threshold scales: mass fractions, gamma, and the internal energy for e0
-        const rtype e_scale = Kokkos::fabs(scalars(c, n_species + 1)) + W(c, N_DIM + 1) / (W(c, 0) * (gamma_c - 1.0));
-        rtype phi = 1.0;
+        const rtype e_scale = Kokkos::fabs(scalars(c, n_species + 1)) + W(c, N_DIM + 1) / (W(c, 0) * (gamma_c - 1.0_r));
+        rtype phi = 1.0_r;
         for (uint32_t j = 0; j < n_scalars; j++) {
             const rtype S_c = scalars(c, j);
             rtype b[N_DIM] = {};
@@ -133,7 +133,7 @@ struct ScalarLimiterFunctor {
                 bool prescribed;
                 const int32_t nb = neighbor(c, f, dx, prescribed);
                 const rtype S_n = neighbor_value(c, f, nb, prescribed, j);
-                const rtype w = 1.0 / dot<N_DIM>(dx, dx);
+                const rtype w = 1.0_r / dot<N_DIM>(dx, dx);
                 FOR_I_DIM b[i] += w * dx[i] * (S_n - S_c);
                 S_min = Kokkos::fmin(S_min, S_n);
                 S_max = Kokkos::fmax(S_max, S_n);
@@ -142,7 +142,7 @@ struct ScalarLimiterFunctor {
             gemv<N_DIM>(M_inv, b, g);
             FOR_I_DIM gradients(c, j, i) = g[i];
             if (limiter_type == LimiterType::NONE) continue;
-            const rtype scale = j < n_species ? 1.0 : (j == n_species ? gamma_c : e_scale);
+            const rtype scale = j < n_species ? 1.0_r : (j == n_species ? gamma_c : e_scale);
             for (uint32_t k = k_begin; k < k_end; k++) {
                 const uint32_t f = faces_of_cell(k);
                 const uint8_t s = (cells_of_face(f, 1) == static_cast<int32_t>(c)) ? face_shift(f) : 0;
@@ -163,18 +163,18 @@ struct ScalarLimiterFunctor {
             rtype r[N_DIM];
             FOR_I_DIM r[i] = (face_coords(f, i) - shifts(s, i)) - cell_coords(c, i);
             for (uint32_t j = 0; j <= n_species; j++) {
-                rtype d = 0.0;
+                rtype d = 0.0_r;
                 FOR_I_DIM d += gradients(c, j, i) * r[i];
                 const rtype S_c = scalars(c, j);
                 if (j < n_species) {
-                    if (d > 0.0) phi = Kokkos::fmin(phi, (1.0 - S_c) / d);
-                    if (d < 0.0) phi = Kokkos::fmin(phi, S_c / -d);
-                } else if (d < 0.0) {
-                    phi = Kokkos::fmin(phi, 0.5 * (S_c - 1.0) / -d);
+                    if (d > 0.0_r) phi = Kokkos::fmin(phi, (1.0_r - S_c) / d);
+                    if (d < 0.0_r) phi = Kokkos::fmin(phi, S_c / -d);
+                } else if (d < 0.0_r) {
+                    phi = Kokkos::fmin(phi, 0.5_r * (S_c - 1.0_r) / -d);
                 }
             }
         }
-        limiter(c) = Kokkos::fmax(phi, 0.0);
+        limiter(c) = Kokkos::fmax(phi, 0.0_r);
     }
 };
 

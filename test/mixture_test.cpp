@@ -31,6 +31,11 @@ const std::string SOURCE_DIR = MALLARD_SOURCE_DIR;
 const std::string PERFECT_AIR = SOURCE_DIR + "/test/data/chemistry/perfect_air.yaml";
 const std::string H2O2 = SOURCE_DIR + "/mechanisms/h2o2.yaml";
 
+/** @brief A tolerance for double builds, or its counterpart for float builds. */
+constexpr double tol(double in_double, double in_float) {
+    return sizeof(rtype) == sizeof(double) ? in_double : in_float;
+}
+
 /** @brief Generated box [0, L]^N_DIM with n cells per direction (the first can differ). */
 std::string mesh_block(const std::string & type, uint32_t nx, uint32_t n, double Lx, double L,
                        const std::string & periodic = "") {
@@ -129,12 +134,14 @@ TEST_P(MixtureEquivalence, ConstantCpSingleSpeciesReproducesPerfectGas) {
     mixed.run();
     mixed.copy_device_to_host();
 
-    EXPECT_NEAR(mixed.get_time(), perfect.get_time(), 1e-12 * perfect.get_time());
-    EXPECT_LT(max_relative_difference(mixed, perfect), 1e-12);
+    const double t = double(perfect.get_time());
+    EXPECT_NEAR(double(mixed.get_time()), t, tol(1e-12, 1e-5) * t);
+    EXPECT_LT(max_relative_difference(mixed, perfect), tol(1e-12, 1e-4));
     for (uint32_t cell = 0; cell < perfect.get_mesh()->n_cells; cell++) {
-        const double T = perfect.h_primitives(cell, N_DIM + 1);
-        EXPECT_NEAR(mixed.h_primitives(cell, N_DIM + 1), T, 1e-10 * T);
-        EXPECT_NEAR(mixed.h_species(cell, 0), mixed.h_conservatives(cell, 0), 1e-14 * mixed.h_conservatives(cell, 0));
+        const double T = double(perfect.h_primitives(cell, N_DIM + 1));
+        const double rho = double(mixed.h_conservatives(cell, 0));
+        EXPECT_NEAR(double(mixed.h_primitives(cell, N_DIM + 1)), T, tol(1e-10, 1e-4) * T);
+        EXPECT_NEAR(double(mixed.h_species(cell, 0)), rho, tol(1e-14, 1e-6) * rho);
     }
 }
 
@@ -164,9 +171,9 @@ TEST(MixtureTest, IdenticalSpeciesAdvectWithoutDisturbingTheFlow) {
         s.copy_device_to_host();
         double m = 0.0, mx = 0.0;
         for (uint32_t c = 0; c < s.get_mesh()->n_cells; c++) {
-            const double w = s.h_species(c, 1) * s.get_mesh()->h_cell_volume(c);
+            const double w = double(s.h_species(c, 1)) * double(s.get_mesh()->h_cell_volume(c));
             m += w;
-            mx += w * s.get_mesh()->h_cell_coords(c, 0);
+            mx += w * double(s.get_mesh()->h_cell_coords(c, 0));
         }
         return mx / m;
     };
@@ -175,22 +182,24 @@ TEST(MixtureTest, IdenticalSpeciesAdvectWithoutDisturbingTheFlow) {
     const std::vector<rtype> after = solver.integrate_species();
     const double x_after = centroid(solver);
 
-    for (size_t k = 0; k < before.size(); k++) EXPECT_NEAR(after[k], before[k], 1e-13 * before[k]);
-    EXPECT_NEAR(x_after - x_before, 100.0 * solver.get_time(), 0.1 / n);
+    for (size_t k = 0; k < before.size(); k++) {
+        EXPECT_NEAR(double(after[k]), double(before[k]), tol(1e-13, 1e-5) * double(before[k]));
+    }
+    EXPECT_NEAR(x_after - x_before, 100.0 * double(solver.get_time()), 0.1 / n);
     EXPECT_GT(x_after - x_before, 0.5 / n);
     for (uint32_t c = 0; c < solver.get_mesh()->n_cells; c++) {
-        const double rho = solver.h_conservatives(c, 0);
-        EXPECT_NEAR(solver.h_primitives(c, N_DIM), 1.0e5, 1e-10 * 1.0e5);
-        EXPECT_NEAR(solver.h_primitives(c, 0), 100.0, 1e-10 * 100.0);
-        EXPECT_NEAR(solver.h_primitives(c, 1), 50.0, 1e-10 * 100.0);
+        const double rho = double(solver.h_conservatives(c, 0));
+        EXPECT_NEAR(double(solver.h_primitives(c, N_DIM)), 1.0e5, tol(1e-10, 1e-5) * 1.0e5);
+        EXPECT_NEAR(double(solver.h_primitives(c, 0)), 100.0, tol(1e-10, 1e-5) * 100.0);
+        EXPECT_NEAR(double(solver.h_primitives(c, 1)), 50.0, tol(1e-10, 1e-5) * 100.0);
         double sum = 0.0;
         for (uint32_t k = 0; k < 2; k++) {
-            const double Y = solver.h_species(c, k) / rho;
-            EXPECT_GE(Y, -1e-15);
-            EXPECT_LE(Y, 1.0 + 1e-15);
+            const double Y = double(solver.h_species(c, k)) / rho;
+            EXPECT_GE(Y, -tol(1e-15, 1e-7));
+            EXPECT_LE(Y, 1.0 + tol(1e-15, 1e-7));
             sum += Y;
         }
-        EXPECT_NEAR(sum, 1.0, 1e-13);
+        EXPECT_NEAR(sum, 1.0, tol(1e-13, 1e-5));
     }
 }
 
@@ -245,10 +254,10 @@ std::vector<double> shock_tube_errors(uint32_t n, double & Y_min, double & Y_max
     Y_min = 1.0;
     Y_max = 0.0;
     for (uint32_t c = 0; c < n; c++) {
-        const uint32_t i = static_cast<uint32_t>(solver.get_mesh()->h_cell_coords(c, 0) * n);
-        const double rho = solver.h_conservatives(c, 0);
-        const double values[5] = {rho, solver.h_primitives(c, 0), solver.h_primitives(c, N_DIM),
-                                  solver.h_primitives(c, N_DIM + 1), solver.h_species(c, k_N2) / rho};
+        const uint32_t i = static_cast<uint32_t>(double(solver.get_mesh()->h_cell_coords(c, 0)) * n);
+        const double rho = double(solver.h_conservatives(c, 0));
+        const double values[5] = {rho, double(solver.h_primitives(c, 0)), double(solver.h_primitives(c, N_DIM)),
+                                  double(solver.h_primitives(c, N_DIM + 1)), double(solver.h_species(c, k_N2)) / rho};
         const double exact[5] = {ref[i][1], ref[i][2], ref[i][3], ref[i][4], ref[i][5 + k_N2]};
         for (int j = 0; j < 5; j++) {
             err[j] += std::abs(values[j] - exact[j]) / n;
@@ -303,7 +312,7 @@ double interface_pressure_error(uint32_t n, Solver & solver) {
     solver.copy_device_to_host();
     double err = 0.0;
     for (uint32_t c = 0; c < solver.get_mesh()->n_cells; c++) {
-        err = std::max(err, std::abs(solver.h_primitives(c, N_DIM) / 1.0e5 - 1.0));
+        err = std::max(err, std::abs(double(solver.h_primitives(c, N_DIM)) / 1.0e5 - 1.0));
     }
     return err;
 }
@@ -322,8 +331,8 @@ TEST(MixtureTest, HydrogenAirContactPressureErrorDecreasesUnderRefinement) {
     EXPECT_GT(e_fine, 1e-4);  // the conservative scheme cannot keep p exactly uniform
     const std::vector<rtype> mass = fine.integrate_species();
     double total = 0.0;
-    for (rtype m : mass) total += m;
-    EXPECT_NEAR(total, fine.integrate_conservatives()[0], 1e-12 * total);
+    for (rtype m : mass) total += double(m);
+    EXPECT_NEAR(total, double(fine.integrate_conservatives()[0]), tol(1e-12, 1e-5) * total);
 }
 
 TEST(MixtureTest, InvalidMixtureInputsAreRejected) {
