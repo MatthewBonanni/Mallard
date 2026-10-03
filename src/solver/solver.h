@@ -324,6 +324,7 @@ class Solver {
 
         // Gas mixtures
         ScalarView cell_scalars;                              // (cell, [Y_1 .. Y_Ns, gamma, e0])
+        Kokkos::View<rtype *> cell_molar_mass;                // TENO: troubled-cell indicator
         Kokkos::View<rtype *> T_seed;                         // Newton seed of each cell's temperature
         Kokkos::View<rtype *>::host_mirror_type h_T_seed;
         Kokkos::View<rtype **[2][2]> face_thermo;              // (face, q, side, [gamma, e0])

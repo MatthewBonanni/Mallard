@@ -40,6 +40,7 @@ struct MixtureCellFunctor {
     Kokkos::View<rtype *> T_seed;
     Kokkos::View<rtype *[N_CONSERVATIVE]> W;
     ScalarView scalars;
+    Kokkos::View<rtype *> molar_mass;  // empty unless TENO needs it
     bool update_seed;
 
     KOKKOS_INLINE_FUNCTION
@@ -50,6 +51,10 @@ struct MixtureCellFunctor {
         rtype gamma, e0, T;
         gas.cell_state(cons, rhoY_c, T_seed(c), W_c, gamma, e0, T);
         FOR_I_CONSERVATIVE W(c, i) = W_c[i];
+        if (molar_mass.extent(0) > 0) {
+            molar_mass(c) = static_cast<rtype>(chemistry::GAS_CONSTANT * static_cast<double>(W_c[0]) *
+                                               static_cast<double>(T) / static_cast<double>(W_c[N_DIM + 1]));
+        }
         const rtype inv_rho = 1.0_r / cons[0];
         for (uint32_t k = 0; k < gas.n_species; k++) scalars(c, k) = rhoY_c[k] * inv_rho;
         scalars(c, gas.n_species) = gamma;
@@ -193,7 +198,8 @@ std::array<rtype, 6> Solver::mixture_diagnostics() {
 }
 
 void Solver::update_cell_states(const State & solution, const bool update_seed) {
-    MixtureCellFunctor functor{mixture, solution.flow, solution.species, T_seed, W_cells, cell_scalars, update_seed};
+    MixtureCellFunctor functor{mixture, solution.flow, solution.species, T_seed, W_cells, cell_scalars,
+                               cell_molar_mass, update_seed};
     Kokkos::parallel_for("mixture_cells", mesh->n_cells, functor);
 }
 
@@ -225,17 +231,8 @@ void Solver::calc_rhs_mixture(State state, State rhs_state, rtype t_stage) {
     }
 
     const uint32_t n_species = mixture.n_species;
-    SpeciesSlotFunctor slot_functor{mesh->offsets_faces_of_cell,
-                                    mesh->faces_of_cell,
-                                    mesh->face_area,
-                                    face_reconstruction->quadrature_face.weights,
-                                    face_reconstruction->face_quad_weights,
-                                    face_mdot,
-                                    scalar_reconstruction.face_values(cell_scalars),
-                                    boundary_data,
-                                    species_slots,
-                                    n_species};
-    Kokkos::parallel_for("species_slots", mesh->n_cells, slot_functor);
+    scalar_reconstruction.species_slots(cell_scalars, face_mdot, face_reconstruction->quadrature_face.weights,
+                                        face_reconstruction->face_quad_weights, species_slots);
 
     const uint32_t n_owned = mesh->n_owned();
     StateView rhs = rhs_state.flow;

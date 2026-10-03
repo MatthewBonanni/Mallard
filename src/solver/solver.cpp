@@ -593,10 +593,6 @@ void Solver::init_numerics() {
     face_reconstruction->set_boundaries(boundary_data);
     face_reconstruction->init(face_reconstruction_input);
     if (is_mixture()) {
-        if (it_face->second == FaceReconstructionType::TENO) {
-            throw InputError("numerics.face_reconstruction: TENO is not yet supported with gas = \"mixture\" "
-                             "(FO, MUSCL).");
-        }
         if (riemann_solver_type == RiemannSolverType::ROE || riemann_solver_type == RiemannSolverType::RHLL) {
             throw InputError("numerics.riemann_solver: " + RIEMANN_SOLVER_NAMES.at(riemann_solver_type) +
                              " is not supported with gas = \"mixture\" (Rusanov, HLL, HLLC).");
@@ -735,6 +731,10 @@ void Solver::allocate_memory() {
         face_thermo = Kokkos::View<rtype **[2][2]>("face_thermo", mesh->n_faces, n_quad);
         face_mdot = Kokkos::View<rtype **>("face_mdot", mesh->n_faces, n_quad);
         species_slots = Kokkos::View<rtype ***, Kokkos::LayoutRight>("species_slots", mesh->n_faces, 2, n_species);
+        if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) {
+            cell_molar_mass = Kokkos::View<rtype *>("cell_molar_mass", mesh->n_cells);
+            teno->set_mixture(Kokkos::subview(cell_scalars, Kokkos::ALL(), n_species), cell_molar_mass);
+        }
         h_Y = Kokkos::View<rtype **, Kokkos::LayoutRight, Kokkos::HostSpace>("Y", mesh->n_cells, n_species);
         h_X = Kokkos::View<rtype **, Kokkos::LayoutRight, Kokkos::HostSpace>("X", mesh->n_cells, n_species);
     }
