@@ -119,12 +119,14 @@ translation = [1.0, 0.0]
 | `phase` | (`mixture`) Phase of the file to use; default the first |
 
 Gas mixtures (`gas = "mixture"`) are non-reacting for now and need
-`type = "euler"`, `FO` or `MUSCL` reconstruction and the `Rusanov`, `HLL` or
-`HLLC` Riemann solver. Species thermodynamics are NASA-7, NASA-9 or constant-cp
+`type = "euler"` and the `Rusanov`, `HLL` or `HLLC` Riemann solver; any face
+reconstruction works. Species thermodynamics are NASA-7, NASA-9 or constant-cp
 polynomials from the file, evaluated in double precision in every build. Each
 species is transported (`rho Y_k`) with mass-flux upwinding, so mass fractions
-stay in [0, 1] and sum to one; with MUSCL all mass fractions share one limiter
-per cell. The scheme is conservative: at contacts between gases of different
+stay in [0, 1] and sum to one; all mass fractions share one stencil and one
+limiter per cell (MUSCL), or the stencils TENO chose for the contact field
+(TENO, which reconstructs the flow in primitive variables for mixtures and
+also flags cells by jumps of the molar mass). The scheme is conservative: at contacts between gases of different
 `cp / cv` (e.g. cold hydrogen and hot air) the pressure is perturbed at the
 percent level on coarse meshes.
 

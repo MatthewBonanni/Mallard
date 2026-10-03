@@ -1,7 +1,7 @@
 # Design: finite-rate chemistry
 
 Status: accepted (see [Decisions on the open questions](#decisions-on-the-open-questions)).
-Implementation follows the [milestones](#10-milestones); done: 1, 2, 3.
+Implementation follows the [milestones](#10-milestones); done: 1, 2, 3, 4.
 
 Mallard today solves a single calorically perfect gas. This document adds
 multicomponent, thermally perfect mixtures and finite-rate chemistry with
@@ -283,6 +283,22 @@ The design:
 4. **Troubled-cell indicator**: today's density-jump variance misses species
    interfaces at constant density (common in non-premixed flames). It becomes
    the maximum of the variances of `rho` and of the mixture molar mass `W`.
+
+As implemented (milestone 4): the primitive eigenvectors take the face
+average of `W` and the sound speed from the average of the two cells' frozen
+`gamma`; the entropy field's choice on each face side is stored as one byte
+(`0xFF` for the large stencil, else a bitmask of the kept sector stencils,
+averaged with equal weights as TENO does); the scalars' face values are not
+stored but recomputed from the stencil weights twice per stage, once for
+`theta` and the face values of `gamma` and `e0` before the flux, once for the
+species slots after it. The local-range bound of troubled cells clips smooth
+extrema where the indicator flags a smooth but coarsely resolved field: a
+smooth composition wave on 16^3 hexahedra flags every cell at TENO5 and
+converges at about third order there, at fifth order once resolved (2D).
+At sharp contacts between gases of different `gamma` the conservative
+scheme's pressure error stays at 2-3% under refinement with TENO5 (the contact
+stays a few cells wide), against a slow decrease with MUSCL: double flux
+(milestone 5) is the remedy.
 
 This makes species reconstruction a sequence of dot products with weights
 already computed for the flow block: no smoothness indicators per species and
