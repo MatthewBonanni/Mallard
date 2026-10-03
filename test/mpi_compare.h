@@ -97,6 +97,10 @@ inline void expect_rebalanced_run_matches_serial(const std::string & input, uint
             weights[c] = (step == 3 ? g < n / 4 : g >= 3 * n / 4) ? 8 : 1;
         }
         solver.rebalance(weights);
+        // TENO data moves with the cells instead of being recomputed
+        if (const auto * teno = dynamic_cast<const TENO *>(solver.get_face_reconstruction())) {
+            EXPECT_EQ(teno->reused_cells(), solver.get_mesh()->n_reconstructed()) << "after step " << step;
+        }
         const auto & now = solver.get_distribution();
         for (uint32_t c = 0; c < now.n_owned; c++) moved += !before.count(now.global_cell[c]);
     }

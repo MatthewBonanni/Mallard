@@ -67,6 +67,9 @@ double wait_seconds();
 /** @brief Add a wait outside comm to wait_seconds(). */
 void add_wait(double seconds);
 
+/** @brief Bytes per second this rank sent and received in exchange() so far (0 before any). */
+double exchange_bandwidth();
+
 enum class Op { SUM, MIN, MAX };
 
 /**

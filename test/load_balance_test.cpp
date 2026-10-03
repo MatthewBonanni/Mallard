@@ -24,7 +24,7 @@
 TEST(LoadBalanceTest, FitRecoversTheTroubledCellCost) {
     const double smooth = 2e-6, troubled = 7 * smooth;  // a troubled cell costs 7 smooth ones
     std::vector<RankLoad> loads;
-    for (const auto [cells, n_troubled] : {std::pair{1000.0, 0.0}, {1100.0, 300.0}, {950.0, 40.0}, {1020.0, 120.0}}) {
+    for (const auto & [cells, n_troubled] : {std::pair{1000.0, 0.0}, {1100.0, 300.0}, {950.0, 40.0}, {1020.0, 120.0}}) {
         loads.push_back({smooth * cells + (troubled - smooth) * n_troubled, cells, n_troubled});
     }
     EXPECT_NEAR(fit_troubled_cost(loads, 3.0), 7.0, 1e-9);
@@ -43,13 +43,13 @@ TEST(LoadBalanceTest, FitRecoversTheTroubledCellCost) {
  */
 TEST(LoadBalanceTest, RebalanceOnlyWhenItPays) {
     RebalancePolicy policy;  // threshold 1.1, budget 1%
-    // Over 100 steps: the slowest rank works 2 s, the others 1 s
-    const std::vector<RankLoad> loads = {{2.0, 1, 0}, {1.0, 1, 0}, {1.0, 1, 0}, {1.0, 1, 0}};
+    // The slowest rank works 20 ms per step, the others 10 ms
+    const std::vector<RankLoad> loads = {{0.02, 1, 0}, {0.01, 1, 0}, {0.01, 1, 0}, {0.01, 1, 0}};
     // Imbalance 1.6; bringing the slowest rank to 1.05 x the mean saves 6.9 s over 1000 steps
-    EXPECT_TRUE(rebalance_pays(loads, 100, 1000.0, 1.0, 0.0, 1000.0, policy));
+    EXPECT_TRUE(rebalance_pays(loads, 1000.0, 1.0, 0.0, 1000.0, policy));
     policy.threshold = 1.7;  // imbalance 1.6
-    EXPECT_FALSE(rebalance_pays(loads, 100, 1000.0, 1.0, 0.0, 1000.0, policy));
+    EXPECT_FALSE(rebalance_pays(loads, 1000.0, 1.0, 0.0, 1000.0, policy));
     policy.threshold = 1.1;
-    EXPECT_FALSE(rebalance_pays(loads, 100, 1000.0, 7.0, 0.0, 10000.0, policy));
-    EXPECT_FALSE(rebalance_pays(loads, 100, 1000.0, 1.0, 9.5, 1000.0, policy));
+    EXPECT_FALSE(rebalance_pays(loads, 1000.0, 7.0, 0.0, 10000.0, policy));
+    EXPECT_FALSE(rebalance_pays(loads, 1000.0, 1.0, 9.5, 1000.0, policy));
 }

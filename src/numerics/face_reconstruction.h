@@ -320,6 +320,26 @@ class TENO : public FaceReconstruction {
          */
         void save_cache(uint8_t halo_layers = 0);
 
+        /**
+         * @brief Precomputed data of these reconstructed cells (sorted), keyed
+         *        by global ids so that another local mesh can use it: per cell,
+         *        its global id, the number of words that follow, and the words.
+         */
+        std::vector<uint64_t> export_records(const std::vector<uint32_t> & cells) const;
+
+        /**
+         * @brief Records from export_records() that init() uses instead of
+         *        precomputing their cells, where every cell and face they name
+         *        is in the local mesh. The data is that a precomputation gives.
+         */
+        void reuse_records(std::shared_ptr<const std::vector<uint64_t>> records) { reuse = std::move(records); }
+
+        /** @brief Bytes of precomputed data per reconstructed cell (on average). */
+        double bytes_per_cell() const;
+
+        /** @brief Reconstructed cells whose data init() took from records. */
+        uint32_t reused_cells() const { return n_reused; }
+
     private:
         template <uint8_t DEG>
         void launch_gradients(Kokkos::View<rtype *[N_CONSERVATIVE]> solution,
@@ -341,6 +361,8 @@ class TENO : public FaceReconstruction {
         uint64_t cache_key() const;
         bool load_cache();
 
+        std::shared_ptr<const std::vector<uint64_t>> reuse;  // records init() takes instead of precomputing
+        uint32_t n_reused = 0;
         std::string cache_file;  // this rank's
         bool cache_loaded = false;
 

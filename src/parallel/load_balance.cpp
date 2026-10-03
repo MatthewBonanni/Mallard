@@ -62,16 +62,16 @@ double imbalance(const std::vector<RankLoad> & loads) {
     return sum > 0.0 ? max_busy * loads.size() / sum : 1.0;
 }
 
-bool rebalance_pays(const std::vector<RankLoad> & loads, uint64_t window_steps, double horizon_steps, double cost,
-                    double spent, double projected_wall, const RebalancePolicy & policy) {
-    if (loads.empty() || window_steps == 0 || imbalance(loads) <= policy.threshold) return false;
+bool rebalance_pays(const std::vector<RankLoad> & loads, double horizon_steps, double cost, double spent,
+                    double projected_wall, const RebalancePolicy & policy) {
+    if (loads.empty() || imbalance(loads) <= policy.threshold) return false;
     double max_busy = 0.0, sum = 0.0;
     for (const RankLoad & l : loads) {
         max_busy = std::max(max_busy, l.busy);
         sum += l.busy;
     }
     constexpr double TARGET = 1.05;  // Max over mean busy time a rebalance is expected to reach
-    const double saving_per_step = (max_busy - TARGET * sum / loads.size()) / window_steps;
+    const double saving_per_step = max_busy - TARGET * sum / loads.size();
     if (!(saving_per_step * horizon_steps > 2.0 * cost)) return false;
     return spent + cost <= policy.max_cost * projected_wall;
 }

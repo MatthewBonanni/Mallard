@@ -17,23 +17,30 @@
 
 #include <toml.hpp>
 
-/** @brief One rank's load over a window of steps. */
+/** @brief One rank's load per step, averaged over a window of steps. */
 struct RankLoad {
-    double busy = 0.0;      // Seconds of own work: stepping time minus waits for other ranks
-    double cells = 0.0;     // Owned cell-steps
-    double troubled = 0.0;  // Owned cell-steps in which the cell was troubled
+    double busy = 0.0;      // Seconds of own work: step time minus waits for other ranks
+    double cells = 0.0;     // Owned cells
+    double troubled = 0.0;  // Owned cells troubled
 };
 
 /** @brief The [parallel] rebalancing inputs. */
 struct RebalancePolicy {
     bool enabled = false;
-    uint64_t interval = 100;     // Steps between checks
+    uint64_t interval = 100;     // Steps between checks; the last MEASURED_STEPS of each measure busy times
     double threshold = 1.1;      // Rebalance above this max / mean busy time
     double max_cost = 0.01;      // Fraction of the run's wall time rebalancing may take
     double troubled_cost = 8.0;  // Cost of a troubled cell in smooth cells, until measured
 
     static RebalancePolicy from_input(const toml::value & input);
 };
+
+/**
+ * @brief Steps per check that measure busy times: the device finishes its
+ *        work before each wait, so waits are waiting only, at the price of the
+ *        communication overlap in those steps.
+ */
+inline constexpr uint64_t MEASURED_STEPS = 5;
 
 /** @brief Part weights are integers: this many units per smooth cell. */
 inline constexpr double WEIGHT_UNIT = 16.0;
@@ -55,14 +62,13 @@ double fit_troubled_cost(const std::vector<RankLoad> & loads, double prior);
  *        saves more than twice the predicted cost over the horizon, and the
  *        rebalancing time spent plus that cost stays within max_cost of the
  *        projected wall time of the run.
- * @param window_steps Steps the loads were measured over.
  * @param horizon_steps Steps the saving is expected to last.
  * @param cost Predicted wall time of a rebalance.
  * @param spent Wall time rebalancing took so far.
  * @param projected_wall Projected wall time of the whole run.
  */
-bool rebalance_pays(const std::vector<RankLoad> & loads, uint64_t window_steps, double horizon_steps, double cost,
-                    double spent, double projected_wall, const RebalancePolicy & policy);
+bool rebalance_pays(const std::vector<RankLoad> & loads, double horizon_steps, double cost, double spent,
+                    double projected_wall, const RebalancePolicy & policy);
 
 /** @brief Max over mean of the ranks' busy times (1 when idle). */
 double imbalance(const std::vector<RankLoad> & loads);

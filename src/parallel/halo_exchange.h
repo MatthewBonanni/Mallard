@@ -49,10 +49,18 @@ class HaloExchange {
 
         bool active() const { return !ranks.empty(); }
 
+        /**
+         * @brief Finish the device's work before waiting for messages, so the
+         *        wait counted in comm::wait_seconds() is waiting only (it
+         *        gives up the overlap; for measurement steps).
+         */
+        void fence_before_wait(bool on) { fence_first = on; }
+
     private:
         void allocate_buffers(uint32_t n_values_per_cell);
 
         std::vector<int> ranks;
+        bool fence_first = false;
         uint32_t n_values = 0;  // per cell in the buffers: the flow block, then the species
         std::vector<uint32_t> send_offsets, recv_offsets;  // per neighbor, in cells
         Kokkos::View<uint32_t *> send_cells, recv_cells;

@@ -30,7 +30,7 @@ Kokkos::View<uint32_t *> flatten(const std::vector<std::vector<uint32_t>> & list
 }
 
 #ifdef Mallard_HAS_MPI
-constexpr bool device_is_host_accessible =
+[[maybe_unused]] constexpr bool device_is_host_accessible =
     Kokkos::SpaceAccessibility<Kokkos::HostSpace, Kokkos::DefaultExecutionSpace::memory_space>::accessible;
 
 #ifdef Mallard_GPU_AWARE_MPI
@@ -98,6 +98,7 @@ void HaloExchange::start(const State & U) {
 void HaloExchange::finish(const State & U) {
     if (!active()) return;
 #ifdef Mallard_HAS_MPI
+    if (fence_first) Kokkos::fence("halo_wait");
     const double t0 = MPI_Wtime();
     if (MPI_Waitall(static_cast<int>(requests.size()), requests.data(), MPI_STATUSES_IGNORE) != MPI_SUCCESS) {
         throw std::runtime_error("HaloExchange: MPI_Waitall failed");
