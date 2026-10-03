@@ -29,6 +29,9 @@
 
 namespace {
 
+// Relative tolerance for geometric tests on the mesh, whose coordinates are rtype
+constexpr double GEOMETRY_TOL = precision_tol<double>(1e-10, 1e-5);
+
 /**
  * @brief Gauss-Legendre nodes and weights on [-1, 1] (Newton iteration).
  */
@@ -116,7 +119,7 @@ bool pseudo_inverse(std::vector<double> A, int m, int n, std::vector<double> & P
         // all lie on axis planes) would pass the rank test once equilibrated
         const double largest = *std::max_element(col_scale.begin(), col_scale.end());
         for (int j = 0; j < n; j++) {
-            if (col_scale[j] < precision_tol<double>(1e-10, 1e-5) * largest) return false;
+            if (col_scale[j] < GEOMETRY_TOL * largest) return false;
         }
     }
     for (int j = 0; j < n; j++) {
@@ -464,8 +467,7 @@ void TENO::compute_stencils_and_matrices() {
                         for (Line & line : lines) {
                             const LineFace & g = line.faces[0];
                             const double off = (lf.x - g.x) * line.nx + (lf.y - g.y) * line.ny;
-                            if (std::abs(nx * line.nx + ny * line.ny - 1.0) < precision_tol<double>(1e-10, 1e-5) &&
-                                std::abs(off) < precision_tol<double>(1e-10, 1e-5) * h) {
+                            if (std::abs(nx * line.nx + ny * line.ny - 1.0) < GEOMETRY_TOL && std::abs(off) < GEOMETRY_TOL * h) {
                                 match = &line;
                                 break;
                             }
@@ -547,7 +549,7 @@ void TENO::compute_stencils_and_matrices() {
         // mirror-symmetric reconstructions
         auto dist2 = [&](const Entry & e) { return (e.x - x0) * (e.x - x0) + (e.y - y0) * (e.y - y0); };
         auto splits_tie = [&](const std::vector<Entry> & list, size_t n) {
-            return n < list.size() && std::abs(dist2(list[n]) - dist2(list[n - 1])) < precision_tol<double>(1e-10, 1e-5) * h * h;
+            return n < list.size() && std::abs(dist2(list[n]) - dist2(list[n - 1])) < GEOMETRY_TOL * h * h;
         };
         uint16_t n_used = ns;
         for (; n_used <= std::min<size_t>(ns_max, candidates.size()); n_used++) {
@@ -595,7 +597,7 @@ void TENO::compute_stencils_and_matrices() {
                 const double dy = e.y - y0;
                 const double alpha = (dx * by - dy * bx) / det;
                 const double beta = (ax * dy - ay * dx) / det;
-                if (alpha >= -precision_tol<double>(1e-10, 1e-5) && beta >= -precision_tol<double>(1e-10, 1e-5)) sector.push_back(e);
+                if (alpha >= -GEOMETRY_TOL && beta >= -GEOMETRY_TOL) sector.push_back(e);
             }
             size_t n_sector = nss;
             while (n_sector < nss_max && splits_tie(sector, n_sector)) n_sector++;
@@ -965,7 +967,7 @@ void TENO::compute_stencils_and_matrices_3d() {
                     d += ((p[q] - v.t[q]) - (double(mesh->h_face_coords(f, q)) - double(mesh->h_face_offset(f, c, q)))) * sign *
                          double(mesh->h_face_normals(f, q));
                 }
-                if (d > -1e-12 * h * double(mesh->h_face_area(f))) return false;
+                if (d > -precision_tol<double>(1e-12, 1e-5) * h * double(mesh->h_face_area(f))) return false;
             }
             return true;
         };
@@ -1027,8 +1029,7 @@ void TENO::compute_stencils_and_matrices_3d() {
                                 off += (pf.x[d] - g.x[d]) * plane.n[d];
                                 cos += n[d] * plane.n[d];
                             }
-                            if (std::abs(cos - 1.0) < precision_tol<double>(1e-10, 1e-5) &&
-                                std::abs(off) < precision_tol<double>(1e-10, 1e-5) * h) {
+                            if (std::abs(cos - 1.0) < GEOMETRY_TOL && std::abs(off) < GEOMETRY_TOL * h) {
                                 match = &plane;
                                 break;
                             }
@@ -1100,7 +1101,7 @@ void TENO::compute_stencils_and_matrices_3d() {
             return pseudo_inverse(A, m, n, P, double(max_condition));
         };
         auto splits_tie = [&](const std::vector<Entry> & list, size_t n) {
-            return n < list.size() && std::abs(dist2(list[n]) - dist2(list[n - 1])) < precision_tol<double>(1e-10, 1e-5) * h * h;
+            return n < list.size() && std::abs(dist2(list[n]) - dist2(list[n - 1])) < GEOMETRY_TOL * h * h;
         };
 
         // Large central stencil, grown until the least-squares system has full rank
@@ -1157,8 +1158,7 @@ void TENO::compute_stencils_and_matrices_3d() {
                     const double alpha = det3(dx, v[a], v[a + 1]) / det;
                     const double beta = det3(v[0], dx, v[a + 1]) / det;
                     const double gamma = det3(v[0], v[a], dx) / det;
-                    in = alpha >= -precision_tol<double>(1e-10, 1e-5) && beta >= -precision_tol<double>(1e-10, 1e-5) &&
-                     gamma >= -precision_tol<double>(1e-10, 1e-5);
+                    in = alpha >= -GEOMETRY_TOL && beta >= -GEOMETRY_TOL && gamma >= -GEOMETRY_TOL;
                 }
                 if (in) sector.push_back(e);
             }
