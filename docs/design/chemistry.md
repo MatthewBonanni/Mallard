@@ -748,14 +748,18 @@ cell, its bin or its rank, so binning and load balancing only reorder work.
   Sherman-Morrison adds the rank-one part with one more solve per
   factorization. GRI-3.0 fills 1,545 of 2,916 entries; the NUIG n-hexane
   mechanism (1268 species) 56,591 of 1.6 million, 3.5%.
-- **Fused half steps** (`[chemistry] fuse_half_steps`, default on): the
+- **Fused half steps** (`[chemistry] fuse_half_steps`, default off): the
   half steps of consecutive steps are one chemistry call, except where output,
   checks or the end of the run read the state (and the next step's `dt` comes
-  from the state before the pending half step, the only change). One
+  from the state before the pending half step). One
   chemistry call per step instead of two halves the chemistry's cost where
   cells take one or two sub-steps per call: on the H2 flame (V8, one CPU
   core) chemistry falls from 7.7 to 3.8 s over 3000 steps and the step from
-  3.8 to 2.5 ms.
+  3.8 to 2.5 ms. It is off by default because the result then depends on the
+  output schedule (`check_interval`, writers, monitors): a run stopped by
+  `t_wall_stop`, or restarted from a step at which the uninterrupted run wrote
+  nothing, no longer reproduces that run bitwise. Making it the default needs
+  the pending half step in the restart file and output from a flushed copy.
 - **Layout**: `SpeciesLayout` is a CMake option (`Mallard_SPECIES_LAYOUT_LEFT`);
   every kernel indexes through the view. On the full-solver benchmark (A100)
   `LayoutLeft` (cells contiguous per species) takes 58.7 ms per step and the

@@ -52,7 +52,7 @@ void Solver::init_chemistry() {
     }
     chemistry_options = reactor_options(input);
     T_frozen = find_double_or(table, "T_frozen", 0.0);
-    fuse_chemistry = toml::find_or<bool>(table, "fuse_half_steps", true);
+    fuse_chemistry = toml::find_or<bool>(table, "fuse_half_steps", false);
     if (table.contains("lanes")) {
         const toml::value & v = table.at("lanes");
         if (!v.is_integer() || v.as_integer() < 0 || v.as_integer() > 1024 ||
