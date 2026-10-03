@@ -150,7 +150,9 @@ TEST(RestartTest, PeakPressureIsARunningMaximumThatSurvivesRestarts) {
     for (uint32_t i = 0; i < mesh.n_cells; i++) {
         const rtype p = straight.h_primitives(i, N_DIM);
         EXPECT_GE(straight.h_p_max(i), p);
-        if (mesh.h_cell_coords(i, 0) < 0.3) EXPECT_GE(straight.h_p_max(i), 2.0_r);
+        if (mesh.h_cell_coords(i, 0) < 0.3) {
+            EXPECT_GE(straight.h_p_max(i), 2.0_r);
+        }
         n_decayed += straight.h_p_max(i) > p + 0.1_r;
         EXPECT_EQ(second.h_p_max(i), straight.h_p_max(i));
     }
