@@ -53,7 +53,7 @@ class PeriodicGrid {
         using Cell = std::array<int64_t, N_DIM>;
         static constexpr int N_NEIGHBORS = N_DIM == 2 ? 9 : 27;
 
-        explicit PeriodicGrid(rtype h) : h(h), tol(periodic_tolerance(h)) {}
+        explicit PeriodicGrid(rtype spacing) : h(spacing), tol(periodic_tolerance(spacing)) {}
 
         Cell cell_of(const Point & x) const;
         /** @brief Neighbor m of cell c, m in [0, N_NEIGHBORS) (c itself included). */
