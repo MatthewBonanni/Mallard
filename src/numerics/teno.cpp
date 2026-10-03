@@ -277,8 +277,8 @@ typename View::host_mirror_type download_rows(const View & dev, const uint32_t c
  */
 class PackedRows {
     public:
-        PackedRows(uint8_t shift, uint8_t width, IndexRow cells, IndexRow faces, ValueRow pinv)
-            : shift(shift), width(width), cells(cells), faces(faces), pinv(pinv) {}
+        PackedRows(uint8_t slice_shift, uint8_t values_per_slot, IndexRow cell_row, IndexRow face_row, ValueRow pinv_row)
+            : shift(slice_shift), width(values_per_slot), cells(cell_row), faces(face_row), pinv(pinv_row) {}
 
         /** @brief Pack the stencils of cells [c0, c0 + tables.size()), which follow the previous chunk. */
         void add(const uint32_t c0, const std::vector<CellTables> & tables) {
@@ -404,8 +404,8 @@ PackedRows small_rows(const TENO & scheme) {
 /** @brief Moves per-cell tables, chunk by chunk, into TENO's device arrays. */
 class TableBuilder {
     public:
-        TableBuilder(TENO & scheme, const uint32_t n_cells)
-            : scheme(scheme), large(large_rows(scheme)), small(small_rows(scheme)) {
+        TableBuilder(TENO & owner, const uint32_t n_cells)
+            : scheme(owner), large(large_rows(owner)), small(small_rows(owner)) {
             const uint8_t nk = scheme.n_dof_large;
             scheme.scale = Kokkos::View<rtype *>("teno_scale", n_cells);
             scheme.basis_mean = Kokkos::View<rtype **>("teno_basis_mean", n_cells, nk);
@@ -615,11 +615,11 @@ void TENO::compute_stencils_and_matrices() {
     uint32_t n_failed_large = 0;
     uint32_t n_invalid_small = 0;
 
-    auto precompute = [&](const uint32_t i, CellTables & t, uint32_t & failed_large, uint32_t & invalid_small) {
+    auto precompute = [&](const uint32_t i, CellTables & out, uint32_t & failed_large, uint32_t & invalid_small) {
         const double x0 = double(mesh->h_cell_coords(i, 0));
         const double y0 = double(mesh->h_cell_coords(i, 1));
         const double h = std::sqrt(double(mesh->h_cell_volume(i)));
-        t.scale = h;
+        out.scale = h;
 
         // Stencil entries are interior cells, or mirror images of interior cells
         // across a straight boundary segment (face >= 0) carrying the boundary
@@ -673,7 +673,7 @@ void TENO::compute_stencils_and_matrices() {
 
         std::vector<double> mean0;
         monomial_means(Entry{i, -1, x0, y0, 0.0, 0.0, 0.0, 0.0}, r, mean0);
-        t.basis_mean.assign(mean0.begin(), mean0.end());
+        out.basis_mean.assign(mean0.begin(), mean0.end());
 
         // Whether a point lies strictly inside the copy of a cell translated by t
         auto point_in_cell = [&](const Visit & v, double px, double py) {
@@ -839,17 +839,17 @@ void TENO::compute_stencils_and_matrices() {
             // A stencil cut off by the halo is retried once the halo is deep enough
             if (!truncated) failed_large++;
         } else {
-            t.large_pinv.resize(n_used * nk);
+            out.large_pinv.resize(n_used * nk);
             for (uint16_t s = 0; s < n_used; s++) {
-                t.large_cells.push_back(candidates[s].cell);
-                t.large_faces.push_back(candidates[s].face);
-                for (uint8_t l = 0; l < nk; l++) t.large_pinv[s * nk + l] = P[l * n_used + s];
+                out.large_cells.push_back(candidates[s].cell);
+                out.large_faces.push_back(candidates[s].face);
+                for (uint8_t l = 0; l < nk; l++) out.large_pinv[s * nk + l] = P[l * n_used + s];
             }
         }
 
         // Small sector stencils, one per face
         std::vector<Entry> wide = gather(8 * nss, 6);
-        t.gather_depth = layers_used;
+        out.gather_depth = layers_used;
         const uint32_t n_faces = mesh->h_n_faces_of_cell(i);
         for (uint32_t k = 0; k < n_faces; k++) {
             const uint32_t f = mesh->h_face_of_cell(i, k);
@@ -879,11 +879,11 @@ void TENO::compute_stencils_and_matrices() {
                 invalid_small++;
                 continue;
             }
-            t.small_size[k] = n_sector;
+            out.small_size[k] = n_sector;
             for (uint16_t s = 0; s < n_sector; s++) {
-                t.small_cells.push_back(sector[s].cell);
-                t.small_faces.push_back(sector[s].face);
-                for (uint8_t l = 0; l < teno::NK_SMALL; l++) t.small_pinv.push_back(P[l * n_sector + s]);
+                out.small_cells.push_back(sector[s].cell);
+                out.small_faces.push_back(sector[s].face);
+                for (uint8_t l = 0; l < teno::NK_SMALL; l++) out.small_pinv.push_back(P[l * n_sector + s]);
             }
         }
 
@@ -921,7 +921,7 @@ void TENO::compute_stencils_and_matrices() {
                 }
             });
             for (uint8_t l = 0; l < nk; l++) {
-                for (uint8_t m = l; m < nk; m++) t.si.push_back(M[l * nk + m]);
+                for (uint8_t m = l; m < nk; m++) out.si.push_back(M[l * nk + m]);
             }
         }
     };
@@ -1081,11 +1081,11 @@ void TENO::compute_stencils_and_matrices_3d() {
         for (int k = 1; k <= n; k++) binom[n][k] = binom[n - 1][k - 1] + (k < n ? binom[n - 1][k] : 0.0);
     }
 
-    auto precompute = [&](const uint32_t i, CellTables & t, uint32_t & failed_large, uint32_t & invalid_small) {
+    auto precompute = [&](const uint32_t i, CellTables & out, uint32_t & failed_large, uint32_t & invalid_small) {
         Point3 x0;
         for (int d = 0; d < 3; d++) x0[d] = double(mesh->h_cell_coords(i, d));
         const double h = std::cbrt(double(mesh->h_cell_volume(i)));
-        t.scale = h;
+        out.scale = h;
 
         // Stencil entries: interior cells, or mirror images of interior cells
         // across a planar boundary (face >= 0) carrying the boundary
@@ -1167,7 +1167,7 @@ void TENO::compute_stencils_and_matrices_3d() {
         const Point3 origin = {0.0, 0.0, 0.0};
         std::vector<double> mean0;
         monomial_means(Entry{i, -1, x0, zero, origin, zero, origin}, r, mean0);
-        t.basis_mean.assign(mean0.begin(), mean0.end());
+        out.basis_mean.assign(mean0.begin(), mean0.end());
 
         // Strictly inside the copy of a cell translated by t (points on a face
         // count as outside); the cell's faces are seen from its own frame
@@ -1335,18 +1335,18 @@ void TENO::compute_stencils_and_matrices_3d() {
             // A stencil cut off by the halo is retried once the halo is deep enough
             if (!truncated) failed_large++;
         } else {
-            t.large_pinv.resize(n_used * nk);
+            out.large_pinv.resize(n_used * nk);
             for (uint16_t s = 0; s < n_used; s++) {
-                t.large_cells.push_back(candidates[s].cell);
-                t.large_faces.push_back(candidates[s].face);
-                for (uint8_t l = 0; l < nk; l++) t.large_pinv[s * nk + l] = P[l * n_used + s];
+                out.large_cells.push_back(candidates[s].cell);
+                out.large_faces.push_back(candidates[s].face);
+                for (uint8_t l = 0; l < nk; l++) out.large_pinv[s * nk + l] = P[l * n_used + s];
             }
         }
 
         // Small sector stencils, one per face: entries whose direction from the
         // centroid lies in the cone spanned by the face's vertices
         std::vector<Entry> wide = gather(8 * nss, 6);
-        t.gather_depth = layers_used;
+        out.gather_depth = layers_used;
         const uint32_t n_faces = mesh->h_n_faces_of_cell(i);
         for (uint32_t k = 0; k < n_faces; k++) {
             const uint32_t f = mesh->h_face_of_cell(i, k);
@@ -1381,11 +1381,11 @@ void TENO::compute_stencils_and_matrices_3d() {
                 invalid_small++;
                 continue;
             }
-            t.small_size[k] = n_sector;
+            out.small_size[k] = n_sector;
             for (uint16_t s = 0; s < n_sector; s++) {
-                t.small_cells.push_back(sector[s].cell);
-                t.small_faces.push_back(sector[s].face);
-                for (uint8_t l = 0; l < teno::NK_SMALL; l++) t.small_pinv.push_back(P[l * n_sector + s]);
+                out.small_cells.push_back(sector[s].cell);
+                out.small_faces.push_back(sector[s].face);
+                for (uint8_t l = 0; l < teno::NK_SMALL; l++) out.small_pinv.push_back(P[l * n_sector + s]);
             }
         }
 
@@ -1428,7 +1428,7 @@ void TENO::compute_stencils_and_matrices_3d() {
                 }
             }
             for (uint8_t l = 0; l < nk; l++) {
-                for (uint8_t m = l; m < nk; m++) t.si.push_back(M[l * nk + m]);
+                for (uint8_t m = l; m < nk; m++) out.si.push_back(M[l * nk + m]);
             }
         }
     };
