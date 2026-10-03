@@ -10,6 +10,7 @@ set(MALLARD_TEST_SOURCES
     chemistry_reactor_test.cpp
     chemistry_transport_test.cpp
     mixture_test.cpp
+    mixture_transport_test.cpp
     mesh_block_test.cpp
     distributed_mesh_test.cpp
 )

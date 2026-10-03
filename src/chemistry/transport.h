@@ -102,7 +102,8 @@ struct TransportTable {
      * @brief Mixture viscosity mu [Pa s], conductivity lambda [W/(m K)] and
      *        species diffusion coefficients D [m^2/s] (n_species values, also
      *        used as work memory) at temperature T, pressure p, density rho
-     *        and cp [J/(kg K)], for mass fractions y(k).
+     *        and cp [J/(kg K)], for mass fractions y(k). As Cantera, mole
+     *        fractions below 1e-20 count as 1e-20 in the mixing rules.
      */
     template <typename F_Y>
     KOKKOS_INLINE_FUNCTION void properties(const double T, const double p, const double rho, const double cp,
@@ -110,10 +111,13 @@ struct TransportTable {
         const double L = Kokkos::log(T);
         const double sqrt_T = Kokkos::sqrt(T);
         const double t14 = Kokkos::sqrt(sqrt_T);
+        // Small negative mass fractions (round-off, or the overshoots of explicit
+        // diffusion) count as zero
+        auto Y = [&](const uint32_t k) { return Kokkos::fmax(0.0, y(k)); };
         double n = 0.0;
-        for (uint32_t k = 0; k < n_species; k++) n += y(k) / W(k);
+        for (uint32_t k = 0; k < n_species; k++) n += Y(k) / W(k);
         const double inv_n = 1.0 / n;  // mean molar mass
-        auto X = [&](const uint32_t k) { return Kokkos::fmax(TINY, y(k) / W(k) * inv_n); };
+        auto X = [&](const uint32_t k) { return Kokkos::fmax(TINY, Y(k) / W(k) * inv_n); };
         // sqrt(mu_k) in D until the diffusion coefficients
         for (uint32_t k = 0; k < n_species; k++) D[k] = t14 * poly(&visc(k, 0), L);
         mu = 0.0;
@@ -142,13 +146,17 @@ struct TransportTable {
             D[0] = T15_p * poly(&diff(0, 0, 0), L);
             return;
         }
+        // D_k = (1 - Y_k) / sum_(j != k) X_j / D_kj, with 1 - Y_k summed from the
+        // other species: Cantera's (W - X_k W_k) / (W sum ...) cancels to round-off
+        // noise over a vanishing denominator where species k is nearly pure
         for (uint32_t k = 0; k < n_species; k++) {
-            double sum = 0.0;
+            double sum = 0.0, others = 0.0;
             for (uint32_t j = 0; j < n_species; j++) {
-                if (j != k) sum += X(j) / poly(&diff(j, k, 0), L);
+                if (j == k) continue;
+                sum += X(j) / poly(&diff(j, k, 0), L);
+                others += Y(j);
             }
-            sum /= T15_p;
-            D[k] = (inv_n - X(k) * W(k)) / (inv_n * sum);
+            D[k] = others * T15_p / sum;
         }
     }
 };

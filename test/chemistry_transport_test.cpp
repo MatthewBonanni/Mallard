@@ -139,9 +139,14 @@ TEST(TransportTest, MixturePropertiesMatchCantera) {
                 EXPECT_NEAR(h_out(i, 0) / r[ref] - 1.0, 0.0, 1e-6) << c.name << " mu, row " << i;
                 EXPECT_NEAR(h_out(i, 1) / r[ref + 1] - 1.0, 0.0, 1e-6) << c.name << " lambda, row " << i;
                 for (uint32_t k = 0; k < ns; k++) {
-                    // The mixture-averaged D of a pure species is zero, as in Cantera
+                    // The mixture-averaged D of a pure species vanishes; Cantera's
+                    // formula leaves round-off noise there
+                    if (model == TransportModel::MIXTURE_AVERAGED && r[2 + k] == 1.0) {
+                        EXPECT_EQ(h_out(i, 2 + k), 0.0) << c.name << ", row " << i;
+                        continue;
+                    }
                     const double D_ref = model == TransportModel::MIXTURE_AVERAGED ? r[ref + 2 + k] : r[ref + 2 + ns];
-                    EXPECT_NEAR(D_ref == 0.0 ? h_out(i, 2 + k) : h_out(i, 2 + k) / D_ref - 1.0, 0.0, 1e-6)
+                    EXPECT_NEAR(h_out(i, 2 + k) / D_ref - 1.0, 0.0, 1e-6)
                         << c.name << " D_" << mech.species[k].name << ", row " << i;
                 }
             }
