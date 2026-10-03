@@ -36,7 +36,7 @@ Generated meshes have boundary zones named `left`, `right`, `bottom` and `top`.
 `wedge`) periodic in those directions: `left`/`right`, `bottom`/`top` and
 `back`/`front` are joined into interior faces and disappear as boundary zones.
 Every scheme sees the seam as interior. Each periodic direction needs at least
-3 cells. Mesh files cannot be periodic yet.
+3 cells. Zones of mesh files are paired with `[[periodic]]` (below).
 
 In the 3D build (`-DMallard_DIM=3`), generated meshes are boxes
 `[0, Lx] x [0, Ly] x [0, Lz]` of `Nx x Ny x Nz` blocks (`Nz`, `Lz` default to
@@ -77,6 +77,31 @@ count, Gmsh/VTK node order), `/boundary/offsets`, `/boundary/nodes` and
 `/boundary/zone` (boundary faces and their zone index), the attribute
 `/boundary/zone_names`, and the root attributes `format = "mallard-mesh"`,
 `version = 1` and `dimension`.
+
+## `[[periodic]]`
+
+Pairs two boundary zones of any mesh (e.g. Gmsh physical curves or surfaces,
+or zones of an HDF5 mesh) into a periodic seam, serially and in distributed
+runs: zone B must be zone A translated, node by node (to 1e-6 of the zones'
+shortest edge), as Gmsh's `Periodic` constraint produces. The faces of both
+zones become interior faces and take no `[[boundaries]]` entry. A node with no
+match is reported with its coordinates. Each zone joins at most one pair, and
+as for generated meshes, each periodic direction needs at least 3 cells.
+
+| Key | Description |
+|---|---|
+| `zones` | `[A, B]`: the zone names |
+| `translation` | `[t_x, t_y]` (`[t_x, t_y, t_z]` in 3D) with B = A + translation |
+
+```toml
+[mesh]
+type = "file"
+filename = "box.msh"
+
+[[periodic]]
+zones = ["left", "right"]
+translation = [1.0, 0.0]
+```
 
 ## `[physics]`
 
@@ -146,7 +171,7 @@ the zone's faces whose centers satisfy the expression.
 | `C_T` | (`TENO`) Fixed TENO cutoff; adaptive (1e-10 to 1e-6) if omitted |
 | `characteristic` | (`TENO`) Select stencils on characteristic variables, default true |
 | `max_condition` | (`TENO`) Stencils grow until the least-squares system's condition estimate is below this, default 1e8 |
-| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options (serial runs only). The file is large in 3D: about 50 KB per cell for order 5, e.g. 13 GB for 64^3 hexahedra |
+| `cache_file` | (`TENO`) Save the precomputed stencils and matrices here, and reuse them on later runs of the same mesh, boundary assignment and TENO options; anything else is detected and recomputed. Distributed runs write one file per rank, `<cache_file>.r<rank>-of-<ranks>`, for that rank count and partition, and record the halo depth the stencils need, so a cached run sets up its halo once. Hilbert and graph partitions repeat for the same mesh and rank count. Size per cell: about 2.5 / 4 / 6 / 11 KB in 2D and 10 / 19 / 36 KB (hexahedra) or 9 / 14 / 33 / 74 KB (tetrahedra) in 3D for orders 3 / 4 / 5 / 6, e.g. 9.4 GB for 64^3 hexahedra at order 5; reading it takes seconds, against minutes of setup in 3D |
 | `bound_preserving` | (`TENO`) Scale troubled-cell polynomials to keep density and pressure within the neighbors' range, default false |
 
 ## `[[forces]]`

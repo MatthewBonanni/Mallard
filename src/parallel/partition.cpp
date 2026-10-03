@@ -178,6 +178,8 @@ std::vector<int> partition_graph(const DistributedMesh & mesh, int n_parts, cons
     std::vector<GlobalEdgeID> xadj(mesh.graph_offsets().begin(), mesh.graph_offsets().end());
     std::vector<GlobalNodeID> adjncy(mesh.graph_neighbors().begin(), mesh.graph_neighbors().end());
     std::vector<GlobalNodeWeight> vwgt(weights.begin(), weights.end());
+    // The same partition on every call, so per-rank caches (TENO stencils) can be reused
+    kaminpar::dKaMinPar::reseed(0);
     kaminpar::dKaMinPar partitioner(comm::world(), 1, kaminpar::dist::create_default_context());
     partitioner.set_output_level(kaminpar::OutputLevel::QUIET);
     partitioner.copy_graph(vtxdist, xadj, adjncy, vwgt);
