@@ -1876,7 +1876,7 @@ void TENO::launch_reconstruction(const Kokkos::DefaultExecutionSpace & exec,
                     scale, basis_mean, stencil_large_size, stencil_large, stencil_large_face, pinv_large,
                     stencil_small_size, stencil_small, stencil_small_face, pinv_small,
                     si_matrix, troubled, troubled_coeffs, troubled_small_coeffs, troubled_cells, n_troubled,
-                    solution, face_solution, cells};
+                    solution, face_solution, cells, {}};
     using Dynamic = Kokkos::Schedule<Kokkos::Dynamic>;
     using Space = Kokkos::DefaultExecutionSpace;
     if (!troubled_pass) {
