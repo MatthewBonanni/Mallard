@@ -1,19 +1,24 @@
 #!/usr/bin/env python3
 """Animate the sphere wake at Re = 300: Q-criterion isosurfaces and the force history.
 
-    animate_sphere_re300.py SOLUT_DIR FORCES.csv OUTPUT_BASE [--q 0.002] [--u 0.2]
+    animate_sphere_re300.py SOLUT_DIR FORCES.csv OUTPUT_BASE [--q 0.02] [--u 0.2]
         [--width 1920] [--fps 15] [--orbit 120] [--hold 2] [--gif-width 640]
         [--gif-every 2] [--t-start 600] [--prefix sphere]
+    animate_sphere_re300.py --extract SOLUT_DIR SURFACE_DIR [--q 0.02] [--u 0.2]
 
 SOLUT_DIR holds the volume VTU (or PVTU) series of examples/sphere_re300 with
 U. Each snapshot is clipped to the near wake, Q = (|Omega|^2 - |S|^2) / 2 of
 the velocity (interpolated to the vertices) is contoured at Q (in units of
 (U / D)^2, U the free-stream speed) and colored by the streamwise velocity,
 with the sphere, while the camera orbits the wake; the panels on the right
-trace the drag and lift coefficients over the run, from t-start (in D / U)
-on. Writes OUTPUT_BASE.mp4 (H.264, CRF 18), OUTPUT_BASE.gif (if --gif-width >
+trace the drag and lift coefficients from t-start (solver time, D / a) on.
+Writes OUTPUT_BASE.mp4 (H.264, CRF 18), OUTPUT_BASE.gif (if --gif-width >
 0) and a still of the last frame, OUTPUT_BASE_still.png. Needs pyvista besides
 the packages in tools/README.md.
+
+--extract only writes the isosurfaces of each snapshot (q_*.vtp and
+q.pvd), which are far smaller than the volume files: run it where the
+solution is, then animate SURFACE_DIR with --prefix q.
 """
 import argparse
 import glob
@@ -27,6 +32,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pyvista as pv
+from PIL import Image
 
 from animate import write_gif, write_mp4
 from plot_sphere_re300 import REFERENCES, load
@@ -36,6 +42,7 @@ FG = "#e6edf3"
 MUTED = "#8b949e"
 GRID = "#30363d"
 BOUNDS = (-1.0, 12.0, -2.5, 2.5, -2.5, 2.5)
+R_SHEATH = 0.6
 
 
 def snapshot_files(solut, prefix):
@@ -46,7 +53,14 @@ def snapshot_files(solut, prefix):
 
 def q_surface(path, q_level):
     mesh = pv.read(path)
-    mesh = mesh.clip_box(BOUNDS, invert=False, crinkle=True)
+    if path.endswith(".vtp"):
+        return mesh
+    c = mesh.cell_centers().points
+    inside = np.all((c >= np.array(BOUNDS[0::2])) & (c <= np.array(BOUNDS[1::2])), axis=1)
+    # The boundary layer carries Q ~ 0 of either sign: leave it out so that it
+    # does not wrap the sphere in a sheath
+    inside &= np.linalg.norm(c, axis=1) > R_SHEATH
+    mesh = mesh.extract_cells(np.flatnonzero(inside))
     mesh = mesh.cell_data_to_point_data(pass_cell_data=False)
     mesh = mesh.compute_derivative(scalars="U", gradient="G")
     g = np.asarray(mesh.point_data["G"]).reshape(-1, 3, 3)  # g[:, k, i] = d u_k / d x_i
@@ -54,7 +68,26 @@ def q_surface(path, q_level):
     W = 0.5 * (g - g.transpose(0, 2, 1))
     mesh.point_data["Q"] = 0.5 * ((W ** 2).sum((1, 2)) - (S ** 2).sum((1, 2)))
     mesh.point_data["UX"] = np.asarray(mesh.point_data["U"])[:, 0]
-    return mesh.contour([q_level], scalars="Q")
+    surf = mesh.contour([q_level], scalars="Q")
+    if surf.n_points > 0:
+        surf = surf.smooth_taubin(n_iter=30, pass_band=0.1)
+    for name in list(surf.point_data.keys()):
+        if name != "UX":
+            del surf.point_data[name]
+    return surf
+
+
+def extract(solut, out, prefix, q_level):
+    os.makedirs(out, exist_ok=True)
+    entries = []
+    for k, (t, path) in enumerate(snapshot_files(solut, prefix)):
+        name = f"q_{k:05d}.vtp"
+        q_surface(path, q_level).save(os.path.join(out, name))
+        entries.append(f'    <DataSet timestep="{t:.10g}" file="{name}"/>')
+        print(f"{name}: t = {t:.4g}", flush=True)
+    with open(os.path.join(out, "q.pvd"), "w") as f:
+        f.write('<?xml version="1.0"?>\n<VTKFile type="Collection" version="0.1">\n  <Collection>\n'
+                + "\n".join(entries) + "\n  </Collection>\n</VTKFile>\n")
 
 
 def render_3d(plotter, surf, u, angle):
@@ -64,15 +97,19 @@ def render_3d(plotter, surf, u, angle):
                          specular=0.35, specular_power=20, show_scalar_bar=False)
     plotter.add_mesh(pv.Sphere(radius=0.5, theta_resolution=96, phi_resolution=48), color="#c9d1d9",
                      smooth_shading=True, specular=0.5)
-    focus = np.array([4.0, 0.0, 0.0])
+    focus = np.array([4.5, 0.0, 0.0])
     a = np.radians(angle)
-    r = 11.5
-    eye = focus + r * np.array([-0.45, 0.89 * np.sin(a), 0.89 * np.cos(a)])
+    r = 17.0
+    eye = focus + r * np.array([-0.25, 0.97 * np.sin(a), 0.97 * np.cos(a)])
     up = np.array([0.0, np.cos(a), -np.sin(a)])
     plotter.camera_position = [tuple(eye), tuple(focus), tuple(up)]
     plotter.camera.view_angle = 32
     plotter.reset_camera_clipping_range()
-    return plotter.screenshot(return_img=True)
+    img = plotter.screenshot(return_img=True)
+    size = tuple(plotter.window_size)
+    if img.shape[1::-1] != size:  # High-DPI displays render at a multiple of the window size
+        img = np.asarray(Image.fromarray(img).resize(size, Image.LANCZOS))
+    return img
 
 
 def render_panels(t_now, tu, cd, cl, t_start, size, dpi, title_lines):
@@ -108,13 +145,15 @@ def render_panels(t_now, tu, cd, cl, t_start, size, dpi, title_lines):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("solut")
-    ap.add_argument("forces")
-    ap.add_argument("output")
+    ap.add_argument("--extract", nargs=2, metavar=("SOLUT_DIR", "SURFACE_DIR"),
+                    help="Only write the isosurfaces of every snapshot")
+    ap.add_argument("solut", nargs="?")
+    ap.add_argument("forces", nargs="?")
+    ap.add_argument("output", nargs="?")
     ap.add_argument("--prefix", default="sphere")
-    ap.add_argument("--q", type=float, default=0.002, help="Isosurface level of Q, in (U / D)^2")
+    ap.add_argument("--q", type=float, default=0.02, help="Isosurface level of Q, in (U / D)^2")
     ap.add_argument("--u", type=float, default=0.2, help="Free-stream speed")
-    ap.add_argument("--t-start", type=float, default=600.0, help="Start of the force panels, in D / U")
+    ap.add_argument("--t-start", type=float, default=600.0, help="Start of the force panels (solver time)")
     ap.add_argument("--subtitle", default="Q isosurfaces colored by streamwise velocity")
     ap.add_argument("--width", type=int, default=1920)
     ap.add_argument("--fps", type=int, default=15)
@@ -123,11 +162,16 @@ def main():
     ap.add_argument("--gif-width", type=int, default=640)
     ap.add_argument("--gif-every", type=int, default=2, help="Use every n-th frame in the GIF")
     args = ap.parse_args()
+    if args.extract:
+        extract(*args.extract, args.prefix, args.q * args.u ** 2)
+        return
+    if not args.output:
+        ap.error("SOLUT_DIR, FORCES.csv and OUTPUT_BASE are required")
 
     files = snapshot_files(args.solut, args.prefix)
     t, C = load(args.forces, args.u)
     tu = t * args.u
-    direction = C[tu >= args.t_start, 1:].mean(0)
+    direction = C[t >= args.t_start, 1:].mean(0)
     direction /= np.linalg.norm(direction)
     cl = C[:, 1:] @ direction
 
@@ -140,10 +184,10 @@ def main():
     title = ("Sphere at Re = 300, M = 0.2", args.subtitle)
     with tempfile.TemporaryDirectory() as tmp:
         for k, (t_file, path) in enumerate(files):
-            surf = q_surface(path, args.q * (args.u / 1.0) ** 2)
+            surf = q_surface(path, args.q * args.u ** 2)
             angle = args.orbit * k / max(len(files) - 1, 1)
             left = render_3d(plotter, surf, args.u, angle)
-            right = render_panels(t_file * args.u, tu, C[:, 0], cl, args.t_start, (W - w3d, H), 100, title)
+            right = render_panels(t_file * args.u, tu, C[:, 0], cl, args.t_start * args.u, (W - w3d, H), 100, title)
             frame = np.concatenate([left[:H, :w3d], right[:H]], axis=1)
             imageio.imwrite(os.path.join(tmp, f"f{k:05d}.png"), frame)
             if k % args.gif_every == 0:

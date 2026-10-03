@@ -28,11 +28,12 @@ REFERENCES = [
 
 
 def load(path, u):
-    data = np.genfromtxt(path, delimiter=",", names=True)
+    # step, t, pressure force (3), viscous force (3); a run resumed from a
+    # restart appends rows without a header
+    data = np.loadtxt(path, delimiter=",", comments="step")
     q = 0.5 * u ** 2 * np.pi / 4.0
-    t = data["t"]
-    names = data.dtype.names
-    F = np.array([data[names[2 + i]] + data[names[5 + i]] for i in range(3)]).T
+    t = data[:, 1]
+    F = data[:, 2:5] + data[:, 5:8]
     # A restarted run repeats the steps after the restart: keep the last occurrence
     _, last = np.unique(t[::-1], return_index=True)
     keep = np.sort(len(t) - 1 - last)
@@ -91,6 +92,7 @@ def main():
     for name, cd, cl, st in REFERENCES:
         print(f"{name:32s} {st:7.3f} {cd:7.3f} {cl if cl is not None else float('nan'):7.3f}")
     fig, axes = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+    t_max = 0.0
     for path, label in zip(args.forces, labels):
         t, C = load(path, args.u)
         r = analyze(t, C, args.t_start)
@@ -99,19 +101,21 @@ def main():
               f"   ({r['n_periods']} periods, t = {r['t0']:.0f}-{r['t1']:.0f};"
               f" amplitudes Cd {r['cd_amp']:.4f}, Cl {r['cl_amp']:.4f}; lift at {r['angle']:.0f} deg from y)")
         tu = t * args.u
+        t_max = max(t_max, tu[-1])
         axes[0].plot(tu, C[:, 0], lw=1, label=label)
         lift_dir = C[:, 1:] @ np.array([np.cos(np.radians(r["angle"])), np.sin(np.radians(r["angle"]))])
         axes[1].plot(tu, lift_dir, lw=1, label=label)
     for ax, name in zip(axes, ("drag", "lift")):
         ref = REFERENCES[0][1] if name == "drag" else REFERENCES[0][2]
         ax.axhline(ref, color="k", ls="--", lw=0.8, label="Johnson & Patel 1999 (mean)")
-        ax.axvspan(args.t_start * args.u, ax.get_xlim()[1], color="0.9", zorder=0)
+        ax.axvspan(args.t_start * args.u, t_max, color="0.9", zorder=0)
+        ax.set_xlim(0, t_max)
         ax.set_ylabel(f"C_{name[0].upper()}")
         ax.grid(alpha=0.3)
     axes[0].legend(fontsize=8)
     axes[1].set_xlabel("t U / D")
-    axes[0].set_ylim(0.55, 0.8)
-    axes[1].set_ylim(-0.05, 0.15)
+    axes[0].set_ylim(0.6, 0.75)
+    axes[1].set_ylim(0.0, 0.15)
     fig.tight_layout()
     fig.savefig(args.output, dpi=150)
     print(f"wrote {args.output}")
