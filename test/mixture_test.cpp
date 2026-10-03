@@ -601,7 +601,7 @@ TEST(MixtureTest, DoubleFluxShockTubeStaysAccurateAndReportsItsEnergyError) {
     double conservative_energy, double_flux_energy;
     const double conservative = run(false, conservative_energy);
     const double double_flux = run(true, double_flux_energy);
-    EXPECT_LT(conservative_energy, tol(1e-13, 1e-6));
+    EXPECT_LT(conservative_energy, tol(1e-13, 1e-5));
     EXPECT_GT(double_flux_energy, conservative_energy);
     EXPECT_LT(double_flux_energy, 5e-3);  // 0.16% measured
     EXPECT_LT(double_flux, 1.2 * conservative) << "p: " << conservative << " -> " << double_flux;

@@ -1,7 +1,7 @@
 # Design: finite-rate chemistry
 
 Status: accepted (see [Decisions on the open questions](#decisions-on-the-open-questions)).
-Implementation follows the [milestones](#10-milestones); done: 1, 2, 3, 4, 5.
+Implementation follows the [milestones](#10-milestones); done: 1, 2, 3, 4, 5, 6.
 
 Mallard today solves a single calorically perfect gas. This document adds
 multicomponent, thermally perfect mixtures and finite-rate chemistry with
@@ -581,6 +581,19 @@ column), then chain-ruled to `(Y, T)`.
 
 Unit tests compare the Jacobian against finite differences of the rates, and
 the rates against Cantera, at random states.
+
+As implemented (milestone 6, `src/chemistry/kinetics.h`): one table set per
+mechanism, compressed rows per reaction for the forward orders, the products
+(reverse orders), the nonzero net coefficients and the non-default third-body
+efficiencies; elementary, three-body and falloff (Lindemann, Troe, SRI)
+reactions, explicit colliders `(+AR)`, irreversible reactions, non-integer
+forward orders, duplicates, rate constants in any units. The kinetics layer
+returns the rates of progress with `d q / dT` at fixed concentrations, the
+production rates, and the dense `d omega / d C`; the chain rule to the
+reactor's `(Y, T)` is the integrator's (milestone 7). Rates of progress and
+production rates match Cantera to 1e-10 for h2o2, GRI-3.0 and a test
+mechanism with every reaction type; both derivatives match Richardson-
+extrapolated finite differences to 1e-6 of their row norms.
 
 ### Integrator
 
