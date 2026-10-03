@@ -253,15 +253,12 @@ TEST(TENO3DSolver, AdvectedPulseConvergesAndBeatsMUSCL) {
     EXPECT_LT(t2, 0.25 * m2);
 }
 
-TEST(TENO3DSolver, PerturbationsAtRestStayBoundedOnThinPrisms) {
-    // Stencil candidates ranked by physical distance took the whole column
-    // across thin cells first and resolved the other directions only through
-    // small centroid offsets: full rank and a small Lebesgue constant, but a
-    // grid-scale vortical mode grew like exp(13 t) on these prisms of aspect
-    // ratio 6 (order 4, walls all around), to Mach 0.85 by t = 1
-    const double lz = 4.0 / 6.0 / 6.25;
+// Largest speed by t_stop of a velocity perturbation of 1e-3 at rest on 6 x 6 x 4
+// order-4 prisms of the given aspect ratio, symmetry walls all around
+double largest_speed_on_prisms(double aspect_ratio, double t_stop) {
+    const double lz = 4.0 / 6.0 / aspect_ratio;
     std::ostringstream in;
-    in << "[run]\nt_stop = 1.0\ncfl = 0.4\n"
+    in << "[run]\nt_stop = " << t_stop << "\ncfl = 0.4\n"
        << "[mesh]\ntype = \"cartesian_prism\"\nNx = 6\nNy = 6\nNz = 4\nLx = 1.0\nLy = 1.0\nLz = " << lz << "\n"
        << "[initialize]\ntype = \"analytical\"\nrho = \"1.0\"\n"
        << "u = [\"1e-3 * sin(7 * x + 3 * y) * cos(5 * z / " << lz << ")\", \"1e-3 * cos(4 * x - 6 * y)\", \"0.0\"]\n"
@@ -285,7 +282,27 @@ TEST(TENO3DSolver, PerturbationsAtRestStayBoundedOnThinPrisms) {
         }
         speed = std::max(speed, std::sqrt(q2));
     }
+    return speed;
+}
+
+TEST(TENO3DSolver, PerturbationsAtRestStayBoundedOnThinPrisms) {
+    // Stencil candidates ranked by physical distance took the whole column
+    // across thin cells first and resolved the other directions only through
+    // small centroid offsets: full rank and a small Lebesgue constant, but a
+    // grid-scale vortical mode grew like exp(13 t) on these prisms of aspect
+    // ratio 6, to Mach 0.85 by t = 1
+    const double speed = largest_speed_on_prisms(6.25, 1.0);
     std::cout << "largest speed at t = 1: " << speed << std::endl;
+    EXPECT_LT(speed, 1e-2);
+}
+
+TEST(TENO3DSolver, PerturbationsAtRestStayBoundedOnMildlyStretchedPrisms) {
+    // At aspect ratio 2 the neighbors' offsets (spacing ratio 2.25) did not set
+    // these prisms apart from the regular tilings, so their stencils were
+    // ranked by physical distance and a mode next to the side walls grew like
+    // exp(3 t)
+    const double speed = largest_speed_on_prisms(2.0, 2.0);
+    std::cout << "largest speed at t = 2: " << speed << std::endl;
     EXPECT_LT(speed, 1e-2);
 }
 
@@ -307,7 +324,9 @@ TEST(TENO3DStencils, MetricIsTheIdentityOnRegularTilingsOnly) {
         EXPECT_EQ(anisotropic_cells(type, 1.0), 0u) << type;
     }
     for (const char * type : {"cartesian", "cartesian_tet", "cartesian_prism"}) {
-        auto mesh = make_mesh_3d(type, 6, 6, 6, 1.0, 1.0, 1.0 / 6.25);
-        EXPECT_EQ(anisotropic_cells(type, 1.0 / 6.25), mesh->n_cells) << type;
+        for (const double stretch : {1.5, 6.25}) {
+            auto mesh = make_mesh_3d(type, 6, 6, 6, 1.0, 1.0, 1.0 / stretch);
+            EXPECT_EQ(anisotropic_cells(type, 1.0 / stretch), mesh->n_cells) << type << " " << stretch;
+        }
     }
 }

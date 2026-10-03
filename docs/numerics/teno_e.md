@@ -70,17 +70,26 @@ for accuracy (expect design order on uniform triangles).
   the local mesh spacing, |d|_M^2 = d^T M d. M is the inverse of the second moment
   of the offsets of the cell's vertex neighbors, scaled to unit determinant. At
   boundary faces the neighbors are completed by the mirror images of the cells
-  at most as far from the face as the cell. M is the identity unless the spacing
-  ratio sqrt(lambda_max / lambda_min) of that second moment exceeds 2.5.
+  at most as far from the face as the cell. Whether M applies is decided by the
+  tiling's lattice: the shortest three independent translations that carry the
+  cell onto congruent vertex neighbors (node offsets from the centroids equal
+  to 0.1% of the cell's extent per axis, so round-off but not jitter or
+  grading). Their second moment reads every regular tiling of cubes as exactly
+  isotropic, whatever the cell shapes, and the true stretch elsewhere. M is the identity where that lattice is
+  isotropic (spacing ratio within 1 + 1e-6) and applies at any spacing ratio
+  where it is stretched. Cells without three such translations (jittered or
+  general unstructured meshes) keep the cut-off below: M is the identity
+  unless the spacing ratio sqrt(lambda_max / lambda_min) of the neighbors'
+  second moment exceeds 2.5.
   Physical distance on thin cells takes the whole wall-normal column first and
   resolves the other directions only through small centroid offsets. That fit has
   full rank and Lebesgue constants within the bound, but it amplifies grid-scale
   vortical modes: the linearized operator (acoustics at rest, exact upwind
   flux) has real eigenvalues up to +13 (in units of the sound speed over the box
   size) on the thin boxes below, where every eigenvalue should have
-  Re <= 0. The cut-off of 2.5 lies above the spacing ratios that cell shapes
-  alone produce on regular tilings, which keep physical distance and so their
-  stencils:
+  Re <= 0. The neighbors' second moment cannot tell regular tilings from mild
+  stretches; cell shapes alone produce these spacing ratios, and the cut-off
+  of 2.5 lies above the regular tilings':
 
   | Mesh (6^3 to 10^3 blocks, interior cells) | spacing ratio |
   |---|---|
@@ -93,7 +102,15 @@ for accuracy (expect design order on uniform triangles).
 
   A metric everywhere also stabilizes the thin cases, but it ranks stencils of
   the regular Kuhn tiling along its common cube diagonal and makes them up to
-  8 times less accurate in the interior at order 5.
+  8 times less accurate in the interior at order 5; hence the lattice test.
+  Prisms of aspect ratio 1.5 and 2 with walls (2.25 at walls: 1.38-2.05, as
+  the mirror images make them read more isotropic) were ranked by physical
+  distance under the cut-off alone and had wall modes of +0.008 to +3 (orders
+  4 and 6). The lattice's own metric is not the better ranking: it maps a
+  stretched tiling onto the regular one, so stretched prisms inherit the
+  regular tiling's small wall modes (+2e-4 at order 4) and Kuhn tetrahedra at
+  25:1 become unstable without walls (+1.0 at order 4). The neighbors' metric
+  keeps every stretched prism case at or below 1e-8.
 - Measured orders (max error at face quadrature points, symmetry walls): hexahedra
   16 -> 24: 3.83 and 4.85 for orders 4 and 5 (12 -> 16: 2.87 for order 3); Kuhn
   tetrahedra 8 -> 12: 2.92, 3.90, 4.84 for orders 3, 4, 5.
@@ -120,14 +137,15 @@ for accuracy (expect design order on uniform triangles).
   layers of aspect ratio about 7), TENO3 previously reached Mach 0.9 by t = 1
   with a free stream at 0.2. It now stays at the potential-flow start's 0.30
   or below to t = 10 (6741 steps), at 2.1 times MUSCL's cost per step. Remaining:
-  - Prisms of aspect ratio 2 at order 4 in a box with walls all around (spacing
-    ratio 2.25, below the cut-off) keep a growing mode (eigenvalue +2.8) as before.
-    With the metric applied, the same box is stable.
-  - At aspect ratio 25, order 4 prisms with walls all around have one slow mode
-    (eigenvalue +0.02, against spectral radius 350), with or without the metric.
-  - Follow-up: a metric from the second moment of the node positions within a
-    Euclidean ball may serve better than the edge-connected neighbors. The nodes
-    of the Kuhn tiling form the cubic lattice, so they read isotropic, and the
-    cut-off could then be lower. On a ball of twice the cell's radius, though,
-    stretched meshes read only 1.6-2.0 at 6.25:1, because a ball holds the same
-    density in every direction. The radius would need to follow the spacing.
+  - Linearized spectra (HLLC, smooth reconstruction; prisms 6 x 6 x 4, Kuhn
+    tetrahedra 4 x 4 x 4; aspect ratios 1-25; orders 3-6; periodic, walls all
+    around, or walls on the x faces only): stretched prisms are stable
+    (<= 1e-7), the walled 2:1 order-4 box also at 8 x 8 x 6 and 10 x 10 x 6.
+    Remaining modes, all unchanged by the lattice test: regular tilings with
+    walls at orders 4 and 6 (prisms +2e-4 / +4e-5, tetrahedra +2e-4 / +1e-5);
+    prisms at 25:1, order 4, walled, from 8 x 8 x 6 (+4e-4); tetrahedra with walls at order 6 and aspect ratio 1.5-25
+    (+1e-5); and tetrahedra at 25:1 (order 4 walled +0.10, x-walls +1.1;
+    order 6 periodic +0.31, x-walls +0.27) and 6.25:1 (order 6, x-walls
+    +0.025). These tetrahedral modes come with spectral radii of about 330, and
+    neither metric removes all of them; the monomials scaled by the isotropic
+    h = V^(1/3) on such cells are the next suspect.
