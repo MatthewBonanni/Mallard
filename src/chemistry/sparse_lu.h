@@ -55,6 +55,14 @@ struct SparseLUPattern {
     View1<uint32_t> update_offset;                          // per pivot: Schur updates
     Kokkos::View<uint32_t *[3], Kokkos::LayoutRight, MemorySpace> update;  // (target, l, u): a_t -= a_l a_u
     View1<double> v;  // (original index): 1 / W_k, 0 for T
+    // The compact Jacobian: the entries of KineticsTable (species block, row-major), then the T column (n - 1)
+    // and the T row (n); its entries by column, and the source of each L + U entry in it (-1: zero)
+    uint32_t n_entries = 0;
+    View1<uint32_t> entry_row, entry_column, column_offset, column_entry;
+    View1<int32_t> jacobian_source;
+
+    /** @brief Doubles of a cell's compact Jacobian. */
+    KOKKOS_INLINE_FUNCTION uint32_t jacobian_size() const { return n_entries + 2 * n - 1; }
 
     /** @brief Doubles of a cell's work memory: values, z = A_s^-1 u, u and one vector. */
     KOKKOS_INLINE_FUNCTION uint32_t work_size() const { return nnz + 3 * n; }
@@ -68,13 +76,9 @@ SparseLUPattern<MemorySpace> make_sparse_lu_pattern(const Mechanism & mechanism)
     using Bits = std::vector<uint64_t>;
     auto set = [&](Bits & row, const uint32_t c) { row[c / 64] |= uint64_t(1) << (c % 64); };
     auto test = [&](const Bits & row, const uint32_t c) { return (row[c / 64] >> (c % 64)) & 1; };
-    // Pattern of J_s in the original order: mass-action and extra-efficiency terms, the T row and column
+    // Pattern of J_s in the original order: mass-action and extra-efficiency terms (the entries of
+    // KineticsTable), then the diagonal and the T row and column
     std::vector<Bits> P(n, Bits(words, 0));
-    for (uint32_t k = 0; k < n; k++) {
-        set(P[k], k);
-        set(P[k], ns);
-        set(P[ns], k);
-    }
     for (const Reaction & r : mechanism.reactions) {
         std::vector<double> net(ns, 0.0);
         for (const auto & [k, nu] : r.products) net[k] += nu;
@@ -87,6 +91,31 @@ SparseLUPattern<MemorySpace> make_sparse_lu_pattern(const Mechanism & mechanism)
             }
             for (const auto & term : r.efficiencies) set(P[k], static_cast<uint32_t>(term.first));
         }
+    }
+    std::vector<uint32_t> e_row, e_col;
+    std::vector<int64_t> compact(static_cast<size_t>(n) * n, -1);  // original (r, c) -> compact Jacobian index
+    for (uint32_t k = 0; k < ns; k++) {
+        for (uint32_t j = 0; j < ns; j++) {
+            if (!test(P[k], j)) continue;
+            compact[static_cast<size_t>(k) * n + j] = static_cast<int64_t>(e_row.size());
+            e_row.push_back(k);
+            e_col.push_back(j);
+        }
+    }
+    const uint32_t n_entries = static_cast<uint32_t>(e_row.size());
+    for (uint32_t k = 0; k < ns; k++) compact[static_cast<size_t>(k) * n + ns] = n_entries + k;
+    for (uint32_t j = 0; j < n; j++) compact[static_cast<size_t>(ns) * n + j] = n_entries + ns + j;
+    std::vector<uint32_t> column_offset(ns + 1, 0), column_entry(n_entries);
+    for (uint32_t e = 0; e < n_entries; e++) column_offset[e_col[e] + 1]++;
+    for (uint32_t j = 0; j < ns; j++) column_offset[j + 1] += column_offset[j];
+    {
+        std::vector<uint32_t> fill(column_offset.begin(), column_offset.end() - 1);
+        for (uint32_t e = 0; e < n_entries; e++) column_entry[fill[e_col[e]]++] = e;
+    }
+    for (uint32_t k = 0; k < n; k++) {
+        set(P[k], k);
+        set(P[k], ns);
+        set(P[ns], k);
     }
     // Minimum degree on the symmetrized species block, T last
     std::vector<Bits> G(ns, Bits(words, 0));
@@ -156,12 +185,14 @@ SparseLUPattern<MemorySpace> make_sparse_lu_pattern(const Mechanism & mechanism)
     // Entries row by row, and their tables
     std::vector<int64_t> entry(static_cast<size_t>(n) * n, -1);
     std::vector<uint32_t> source, diagonal(n);
+    std::vector<int32_t> jacobian_source;
     for (uint32_t r = 0; r < n; r++) {
         for (uint32_t c = 0; c < n; c++) {
             if (!test(F[r], c)) continue;
             entry[static_cast<size_t>(r) * n + c] = static_cast<int64_t>(source.size());
             if (r == c) diagonal[r] = static_cast<uint32_t>(source.size());
             source.push_back(perm[r] * n + perm[c]);
+            jacobian_source.push_back(static_cast<int32_t>(compact[static_cast<size_t>(perm[r]) * n + perm[c]]));
         }
     }
     auto at = [&](const uint32_t r, const uint32_t c) { return static_cast<uint32_t>(entry[static_cast<size_t>(r) * n + c]); };
@@ -217,12 +248,18 @@ SparseLUPattern<MemorySpace> make_sparse_lu_pattern(const Mechanism & mechanism)
     }
     Kokkos::deep_copy(p.update, h_update);
     p.v = copy(v, "lu_v");
+    p.n_entries = n_entries;
+    p.entry_row = copy(e_row, "lu_entry_row");
+    p.entry_column = copy(e_col, "lu_entry_column");
+    p.column_offset = copy(column_offset, "lu_column_offset");
+    p.column_entry = copy(column_entry, "lu_column_entry");
+    p.jacobian_source = copy(jacobian_source, "lu_jacobian_source");
     return p;
 }
 
 /**
  * @brief The linear solver of integrate() for SparseLUPattern: factor()
- *        gathers diagonal I - J_s from the dense J and factors it, then
+ *        gathers diagonal I - J_s from the compact Jacobian and factors it, then
  *        z = A_s^-1 u and beta = 1 - v . z; solve() is A_s^-1 b plus the
  *        Sherman-Morrison correction z (v . A_s^-1 b) / beta.
  */
@@ -266,10 +303,10 @@ struct SparseLU {
     template <typename Lanes>
     KOKKOS_INLINE_FUNCTION bool factor(const Lanes & lanes, const double * J, const double diagonal) const {
         const uint32_t n = p.n;
-        constexpr bool CM = Lanes::column_major;
         lanes.for_each(p.nnz, [&](const uint32_t e) {
+            const int32_t src = p.jacobian_source(e);
             const uint32_t r = p.source(e) / n, c = p.source(e) % n;
-            values[e] = -J[dense_index<CM>(n, r, c)] + (r == c ? diagonal : 0.0);
+            values[e] = (src >= 0 ? -J[src] : 0.0) + (r == c ? diagonal : 0.0);
         });
         lanes.sync();
         for (uint32_t k = 0; k < n; k++) {

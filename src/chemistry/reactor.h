@@ -59,6 +59,7 @@ struct ConstantVolumeReactor {
     double atol_Y;
     double * scratch;   // scratch_size(kinetics) doubles
     double * rank_one;  // null: J in full; else (n_species + 1) doubles: J = J_s + u v^T with u here, v_j = 1 / W_j
+    const SparseLUPattern<MemorySpace> * sparse = nullptr;  // with rank_one: J_s in the pattern's compact layout
 
     KOKKOS_INLINE_FUNCTION
     static uint32_t scratch_size(const KineticsTable<MemorySpace> & kinetics) {
@@ -92,6 +93,51 @@ struct ConstantVolumeReactor {
      *        layout, see dense_index), from d omega / dC and d q / dT by the
      *        chain rule (C_k = rho Y_k / W_k).
      */
+    /**
+     * @brief The Jacobian in the sparse pattern's compact layout (J_s, with
+     *        u in rank_one): the species block's entries, the T column and
+     *        the T row, by the chain rule as in evaluate().
+     */
+    template <typename Lanes, typename Powers>
+    KOKKOS_INLINE_FUNCTION void compact_jacobian(const Lanes & lanes, const double * y, double * J, const double T,
+                                                 const Powers & p, const double cv, const double inv_rho_cv,
+                                                 const double dT_dt, const double * h_RT, const double * cp_R,
+                                                 const double * omega, const double * domega_dT,
+                                                 const ReactionDerivatives & d) const {
+        const uint32_t ns = thermo.n_species, ne = sparse->n_entries;
+        double * T_column = J + ne;
+        double * T_row = T_column + ns;
+        kinetics.production_jacobian_entries(lanes, d, J, rank_one);
+        const double sum_a =
+            lanes.sum(ns, [&](const uint32_t k) { return GAS_CONSTANT * T * (h_RT[k] - 1.0) * rank_one[k]; });
+        lanes.for_each(ns, [&](const uint32_t j) {
+            double sum = sum_a;
+            for (uint32_t c = sparse->column_offset(j); c < sparse->column_offset(j + 1); c++) {
+                const uint32_t e = sparse->column_entry(c);
+                sum += GAS_CONSTANT * T * (h_RT[sparse->entry_row(e)] - 1.0) * J[e];
+            }
+            const double cv_j = GAS_CONSTANT * (cp_R[j] - 1.0) * thermo.inv_W(j);
+            T_row[j] = -sum * rho * thermo.inv_W(j) * inv_rho_cv - dT_dt * cv_j / cv;
+        });
+        lanes.sync();
+        const double d_sum_dT = lanes.sum(ns, [&](const uint32_t k) {
+            return GAS_CONSTANT * ((cp_R[k] - 1.0) * omega[k] + T * (h_RT[k] - 1.0) * domega_dT[k]);
+        });
+        const double dcv_dT =
+            GAS_CONSTANT * lanes.sum(ns, [&](const uint32_t k) { return y[k] * thermo.inv_W(k) * thermo.dcp_R_dT(k, p); });
+        lanes.single([&]() { T_row[ns] = -d_sum_dT * inv_rho_cv - dT_dt * dcv_dT / cv; });
+        lanes.for_each(ne, [&](const uint32_t e) {
+            J[e] *= thermo.inv_W(sparse->entry_column(e)) / thermo.inv_W(sparse->entry_row(e));
+        });
+        lanes.for_each(ns, [&](const uint32_t k) {
+            const double W_k = 1.0 / thermo.inv_W(k);
+            T_column[k] = W_k * domega_dT[k] / rho;
+            rank_one[k] *= W_k;  // u_k = W_k a_k, with v_j = 1 / W_j
+        });
+        lanes.single([&]() { rank_one[ns] = 0.0; });
+        lanes.sync();
+    }
+
     template <typename Lanes>
     KOKKOS_INLINE_FUNCTION void evaluate(const Lanes & lanes, const double * y, double * f, double * J) const {
         const uint32_t ns = thermo.n_species, nr = kinetics.n_reactions, n = ns + 1;
@@ -132,6 +178,10 @@ struct ConstantVolumeReactor {
         if (!J) return;
 
         kinetics.production_rates(lanes, d.dq_dT, domega_dT, partial);
+        if (sparse) {
+            compact_jacobian(lanes, y, J, T, p, cv, inv_rho_cv, dT_dt, h_RT, cp_R, omega, domega_dT, d);
+            return;
+        }
         kinetics.production_jacobian(lanes, d, J, n, rank_one);
         // With the rank-one part apart, its share of the T row: sum_k u_k a_k
         const double sum_a =
@@ -188,7 +238,8 @@ template <typename MemorySpace>
 KOKKOS_INLINE_FUNCTION uint32_t reactor_work_size(const KineticsTable<MemorySpace> & kinetics,
                                                   const SparseLUPattern<MemorySpace> * sparse = nullptr) {
     const uint32_t n = kinetics.n_species + 1;
-    return n * n + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics) + reactor_fast_size(kinetics, sparse);
+    return (sparse ? sparse->jacobian_size() : n * n) + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics) +
+           reactor_fast_size(kinetics, sparse);
 }
 
 /**
@@ -215,7 +266,7 @@ KOKKOS_INLINE_FUNCTION RosenbrockResult advance_reactor(const Lanes & lanes, con
                                                         double * fast = nullptr) {
     const uint32_t ns = thermo.n_species, n = ns + 1;
     double * J = work;
-    double * scratch = J + n * n;
+    double * scratch = J + (Sparse ? sparse->jacobian_size() : n * n);
     double * y = fast ? fast : scratch + ConstantVolumeReactor<MemorySpace>::scratch_size(kinetics);
     double * solver_work = y + n;
     double * vectors = solver_work + (Sparse ? sparse->work_size() + 1 : n * n);
@@ -243,12 +294,13 @@ KOKKOS_INLINE_FUNCTION RosenbrockResult advance_reactor(const Lanes & lanes, con
         double * z = values + sparse->nnz;
         double * u = z + n;
         double * x = u + n;
-        const ConstantVolumeReactor<MemorySpace> reactor{thermo, kinetics, rho, options.atol_Y, scratch, u};
+        const ConstantVolumeReactor<MemorySpace> reactor{thermo, kinetics, rho, options.atol_Y, scratch, u, sparse};
         const SparseLU<MemorySpace> solver{*sparse, values, z, u, x, x + n};
         result = integrate(lanes, reactor, solver, 0.0, dt, y, h, options.integrator, J, vectors,
                            static_cast<Observer &&>(observer));
     } else {
-        const ConstantVolumeReactor<MemorySpace> reactor{thermo, kinetics, rho, options.atol_Y, scratch, nullptr};
+        const ConstantVolumeReactor<MemorySpace> reactor{thermo, kinetics, rho, options.atol_Y, scratch, nullptr,
+                                                         nullptr};
         const DenseLU solver{n, solver_work, pivot};
         result = integrate(lanes, reactor, solver, 0.0, dt, y, h, options.integrator, J, vectors,
                            static_cast<Observer &&>(observer));

@@ -430,6 +430,34 @@ struct KineticsTable {
     void production_rates(const double * q, double * omega) const { production_rates(SerialLanes(), q, omega); }
 
     /**
+     * @brief The structural entries of the Jacobian of the production rates
+     *        (d omega_k / d C_j at fixed T, without the part shared by all
+     *        columns), values[e] for entry e = (entry_row(e), entry_column(e)),
+     *        one entry per lane; and that shared part of each row in all_columns.
+     */
+    template <typename Lanes>
+    KOKKOS_INLINE_FUNCTION void production_jacobian_entries(const Lanes & lanes, const ReactionDerivatives & d,
+                                                            double * values, double * all_columns) const {
+        lanes.for_each(n_species, [&](const uint32_t k) {
+            double uniform = 0.0;
+            for (uint32_t e = species_offset(k); e < species_offset(k + 1); e++) {
+                const uint32_t i = species_reaction(e);
+                uniform += species_nu(e) * (d.dq_dM[i] * default_efficiency(i) + d.dq_uniform[i]);
+            }
+            all_columns[k] = uniform;
+        });
+        const double * block = d.dq_dT;
+        lanes.for_each(static_cast<uint32_t>(entry_row.extent(0)), [&](const uint32_t e) {
+            double sum = 0.0;
+            for (uint32_t t = entry_offset(e); t < entry_offset(e + 1); t++) {
+                sum += term_coefficient(t) * block[term_source(t)];
+            }
+            values[e] = sum;
+        });
+        lanes.sync();
+    }
+
+    /**
      * @brief Jacobian of the production rates with respect to the
      *        concentrations at fixed T, one row per lane:
      *        J[dense_index(stride, k, j)] = d omega_k / d C_j for j < n_species
@@ -642,8 +670,10 @@ KineticsTable<MemorySpace> make_kinetics_table(const Mechanism & mechanism) {
                 for (uint32_t a = f_off[i]; a < f_off[i + 1]; a++) {
                     row[k * t.n_species + f_sp[a]].emplace_back(off_forward + a, nu);
                 }
-                for (uint32_t a = r_off[i]; a < r_off[i + 1]; a++) {
-                    row[k * t.n_species + r_sp[a]].emplace_back(off_reverse + a, -nu);
+                if (reversible[i]) {
+                    for (uint32_t a = r_off[i]; a < r_off[i + 1]; a++) {
+                        row[k * t.n_species + r_sp[a]].emplace_back(off_reverse + a, -nu);
+                    }
                 }
                 for (uint32_t x = e_off[i]; x < e_off[i + 1]; x++) {
                     row[k * t.n_species + e_sp[x]].emplace_back(off_dM + i, nu * e_extra[x]);

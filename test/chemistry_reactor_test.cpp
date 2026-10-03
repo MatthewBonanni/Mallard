@@ -337,7 +337,7 @@ TEST(ChemistryReactorTest, ReactorJacobianMatchesFiniteDifferences) {
         std::vector<double> y(n), f(n), J(n * n), yp(n), fp(n), fm(n), D1(n), D2(n);
         for (size_t s = 0; s < std::min<size_t>(rates.rows.size(), 10); s++) {
             const ConstantVolumeReactor<Kokkos::HostSpace> reactor{thermo, kinetics, rates.rows[s][1], 1e-10,
-                                                                   scratch.data(), nullptr};
+                                                                   scratch.data(), nullptr, nullptr};
             for (uint32_t k = 0; k < ns; k++) y[k] = rates.rows[s][2 + k];
             y[ns] = rates.rows[s][0];
             reactor.rhs_jacobian(SerialLanes(), y.data(), f.data(), J.data());
@@ -407,10 +407,10 @@ TEST(ChemistryReactorTest, IgnitionDelaysAndEquilibriumMatchCantera) {
 }
 
 TEST(ChemistryReactorTest, SparseLUSolvesLikeTheDenseOne) {
-    // J = J_s + u v^T: J_s on the static pattern, u v^T the columns shared by
-    // every species (third bodies at their default efficiency, PLOG and
-    // Chebyshev pressures); the pattern's LU without pivoting plus
-    // Sherman-Morrison solves (d I - J) x = b as the dense LU does
+    // J = J_s + u v^T: J_s on the static pattern (in its compact layout), u v^T
+    // the columns shared by every species (third bodies at their default
+    // efficiency, PLOG and Chebyshev pressures); the pattern's LU without
+    // pivoting plus Sherman-Morrison solves (d I - J) x = b as the dense LU does
     const std::vector<std::array<std::string, 3>> cases = {
         {"gri30", SOURCE_DIR + "/mechanisms/gri30.yaml", ""},
         {"test_kinetics", SOURCE_DIR + "/test/data/chemistry/test_kinetics.yaml", "gas"},
@@ -426,17 +426,33 @@ TEST(ChemistryReactorTest, SparseLUSolvesLikeTheDenseOne) {
         const Table rates = read_table(name + "_rates.csv");
         std::vector<double> scratch(ConstantVolumeReactor<Kokkos::HostSpace>::scratch_size(kinetics));
         std::vector<double> y(n), f(n), J(n * n), Js(n * n), u(n), LU(n * n), values(pattern.nnz), z(n), x(n),
-            b(n), b_dense(n);
+            b(n), b_dense(n), compact(pattern.jacobian_size()), u_compact(n);
         std::vector<uint32_t> pivot(n);
         double beta;
         for (size_t s = 0; s < std::min<size_t>(rates.rows.size(), 5); s++) {
             for (uint32_t k = 0; k < ns; k++) y[k] = rates.rows[s][2 + k];
             y[ns] = rates.rows[s][0];
             const double rho = rates.rows[s][1];
-            const ConstantVolumeReactor<Kokkos::HostSpace> full{thermo, kinetics, rho, 1e-10, scratch.data(), nullptr};
+            const ConstantVolumeReactor<Kokkos::HostSpace> full{thermo, kinetics, rho, 1e-10, scratch.data(), nullptr,
+                                                                nullptr};
             full.rhs_jacobian(SerialLanes(), y.data(), f.data(), J.data());
-            const ConstantVolumeReactor<Kokkos::HostSpace> split{thermo, kinetics, rho, 1e-10, scratch.data(), u.data()};
+            const ConstantVolumeReactor<Kokkos::HostSpace> split{thermo, kinetics, rho, 1e-10, scratch.data(), u.data(),
+                                                                 nullptr};
             split.rhs_jacobian(SerialLanes(), y.data(), f.data(), Js.data());
+            const ConstantVolumeReactor<Kokkos::HostSpace> sparse_reactor{
+                thermo, kinetics, rho, 1e-10, scratch.data(), u_compact.data(), &pattern};
+            sparse_reactor.rhs_jacobian(SerialLanes(), y.data(), f.data(), compact.data());
+            // The compact layout holds J_s's species entries, T column and T row
+            const uint32_t ne = pattern.n_entries;
+            for (uint32_t e = 0; e < ne; e++) {
+                const uint32_t i = pattern.entry_row(e), j = pattern.entry_column(e);
+                EXPECT_NEAR(compact[e], Js[i * n + j], 1e-12 * std::abs(Js[i * n + j]) + 1e-300) << name << " " << i << " " << j;
+            }
+            for (uint32_t k = 0; k < ns; k++) EXPECT_NEAR(compact[ne + k], Js[k * n + ns], 1e-12 * std::abs(Js[k * n + ns]));
+            for (uint32_t j = 0; j < n; j++) {
+                EXPECT_NEAR(compact[ne + ns + j], Js[ns * n + j], 1e-12 * std::abs(Js[ns * n + j]) + 1e-300);
+            }
+            for (uint32_t k = 0; k < n; k++) EXPECT_NEAR(u_compact[k], u[k], 1e-12 * std::abs(u[k]));
             for (uint32_t i = 0; i < n; i++) {
                 double row_norm = 0.0;
                 for (uint32_t j = 0; j < n; j++) row_norm = std::max(row_norm, std::abs(J[i * n + j]));
@@ -451,7 +467,7 @@ TEST(ChemistryReactorTest, SparseLUSolvesLikeTheDenseOne) {
             const DenseLU dense{n, LU.data(), pivot.data()};
             const SparseLU<Kokkos::HostSpace> sparse{pattern, values.data(), z.data(), u.data(), x.data(), &beta};
             ASSERT_TRUE(dense.factor(SerialLanes(), J.data(), diagonal));
-            ASSERT_TRUE(sparse.factor(SerialLanes(), Js.data(), diagonal));
+            ASSERT_TRUE(sparse.factor(SerialLanes(), compact.data(), diagonal));
             for (uint32_t i = 0; i < n; i++) b[i] = b_dense[i] = std::sin(1.0 + i);
             dense.solve(SerialLanes(), b_dense.data());
             sparse.solve(SerialLanes(), b.data());
