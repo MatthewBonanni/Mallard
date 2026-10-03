@@ -11,13 +11,13 @@ along +x. The whole domain is meshed (no symmetry planes): the box
 geometrically from dn0 on the sphere; tetrahedra fill the rest, with edge
 length h-near around the sphere, h-wake through the near wake (a cylinder of
 radius 1.2 to x = 5), coarsening to 2.5 h-wake at x = 12 and to h-far at the
-box. --scale divides every length (wall size, first layer, layers' sizes) for
-the mesh-sensitivity study, and multiplies the number of layers to keep their
-total thickness. Physical surfaces: "sphere", "inflow" (x = x-min), "outflow"
-(x = x-max) and "lateral" (the four sides). Needs the gmsh Python module.
+box: 0.85M cells. --scale s refines for mesh studies: it divides the sizes on
+and around the sphere, in the wake and of the first layer by s, and makes s
+times as many layers of the same total thickness (s = 1.4: 2.06M cells).
+Physical surfaces: "sphere", "inflow" (x = x-min), "outflow" (x = x-max) and
+"lateral" (the four sides). Needs the gmsh Python module.
 """
 import argparse
-import math
 
 import gmsh
 
