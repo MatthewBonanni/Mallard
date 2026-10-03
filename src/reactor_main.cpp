@@ -10,7 +10,9 @@
  *
  */
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -22,6 +24,7 @@
 #include <toml.hpp>
 
 #include "build_info.h"
+#include "chemistry_benchmark.h"
 #include "input.h"
 #include "kinetics.h"
 #include "log.h"
@@ -33,7 +36,7 @@
 namespace {
 
 void usage(const char * program) {
-    std::cerr << "Usage: " << program << " -i input.toml\n"
+    std::cerr << "Usage: " << program << " -i input.toml   (a [reactor] run, or with [benchmark] a chemistry benchmark)\n"
               << "       " << program << " --version\n";
 }
 
@@ -74,12 +77,17 @@ void run(const std::string & input_file) {
     const auto kinetics = chemistry::make_kinetics_table<Kokkos::HostSpace>(mech);
     const uint32_t ns = mech.n_species();
     const double rho = p0 / (thermo.gas_constant(chemistry::MassFractions{Y.data()}) * T0);
+    const bool sparse = chemistry::use_sparse_lu(options, mech);
+    chemistry::SparseLUPattern<Kokkos::HostSpace> pattern;
+    if (sparse) pattern = chemistry::make_sparse_lu_pattern<Kokkos::HostSpace>(mech);
 
     logging::items(model.summary());
     logging::items({
         {"Reactor", "adiabatic, constant volume"},
         {"Initial state", "T = " + brief(T0) + " K, p = " + brief(p0) + " Pa, rho = " + brief(rho) + " kg/m^3"},
         {"Tolerances", "rtol = " + brief(options.integrator.rtol) + ", atol = " + brief(options.atol_Y)},
+        {"Linear solver", sparse ? "sparse LU, " + std::to_string(pattern.nnz) + " entries of " +
+                                       std::to_string((ns + 1) * (ns + 1)) : std::string("dense LU")},
         {"Output", output},
     });
 
@@ -95,7 +103,7 @@ void run(const std::string & input_file) {
         out << "\n";
     };
 
-    std::vector<double> work(chemistry::reactor_work_size(ns, kinetics.n_reactions));
+    std::vector<double> work(chemistry::reactor_work_size(kinetics, sparse ? &pattern : nullptr));
     std::vector<uint32_t> pivot(ns + 1);
     chemistry::IgnitionObserver observer;
     observer.index = ns;
@@ -106,9 +114,9 @@ void run(const std::string & input_file) {
     while (t < end_time) {
         const double t_next = std::min(end_time, t + interval);
         observer.t_offset = t;
-        const chemistry::RosenbrockResult r = chemistry::advance_reactor(thermo, kinetics, rho, t_next - t, Y.data(),
-                                                                         T, h, options, work.data(), pivot.data(),
-                                                                         observer);
+        const chemistry::RosenbrockResult r =
+            chemistry::advance_reactor(thermo, kinetics, rho, t_next - t, Y.data(), T, h, options, work.data(),
+                                       pivot.data(), observer, sparse ? &pattern : nullptr);
         steps += r.steps;
         rejected += r.rejected;
         if (r.status != chemistry::RosenbrockStatus::SUCCESS) {
@@ -127,6 +135,22 @@ void run(const std::string & input_file) {
         {"Sub-steps", std::to_string(steps) + " accepted, " + std::to_string(rejected) + " rejected"},
         {"Wall time", brief(wall) + " s"},
     });
+}
+
+/** @brief The [benchmark] mode (run_chemistry_benchmark), written as CSV to benchmark.output. */
+void benchmark(const toml::value & input) {
+    const std::string output = toml::find_or<std::string>(input.at("benchmark"), "output", "benchmark.csv");
+    std::ofstream out(output);
+    if (!out) throw InputError("cannot write benchmark.output = \"" + output + "\".");
+    const ChemistryBenchmark b = run_chemistry_benchmark(input);
+    out << "mechanism,species,reactions,threads,lanes,shared,cells,igniting,dt,active,seconds,cells_per_second,"
+           "mean_substeps,max_substeps,histogram\n";
+    for (const ChemistryBenchmarkStep & step : b.steps) {
+        out << b.mechanism << "," << b.species << "," << b.reactions << "," << b.threads << "," << b.lanes << ","
+            << b.shared_bytes << "," << b.cells << "," << b.igniting << "," << step.dt << "," << step.active << ","
+            << step.seconds << "," << b.cells / step.seconds << "," << step.mean_substeps << "," << step.max_substeps
+            << "," << step.histogram << "\n";
+    }
 }
 
 } // namespace
@@ -155,7 +179,11 @@ int main(int argc, char * argv[]) {
     }
     Kokkos::ScopeGuard kokkos(argc, argv);
     try {
-        run(input_file);
+        if (toml::parse(input_file).contains("benchmark")) {
+            benchmark(toml::parse(input_file));
+        } else {
+            run(input_file);
+        }
     } catch (const InputError & e) {
         logging::error(input_file + ": " + e.what());
         return 1;

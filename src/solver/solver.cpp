@@ -970,10 +970,18 @@ int Solver::run() {
         t_wall_output += output_timer.seconds();
     }
     std::string stop;
+    // Strang splitting with the half steps of consecutive steps fused into one
+    // chemistry call, except where output, checks or the end read the state
+    defer_chemistry = reacting && fuse_chemistry;
     while ((stop = stop_reason()).empty()) {
         Kokkos::Timer step_timer;
         calc_dt();
         take_step();
+        if (chemistry_pending > 0.0 && state_needed()) {
+            advance_chemistry(chemistry_pending);
+            chemistry_pending = 0.0;
+            halo_current = false;
+        }
         if (p_max.is_allocated()) update_p_max();
         check_fields();
         t_wall_stepping += step_timer.seconds();
@@ -988,6 +996,7 @@ int Solver::run() {
         write_integrals();
         t_wall_output += output_timer.seconds();
     }
+    defer_chemistry = false;
     if (step != step_last_check) print_progress();
     Kokkos::Timer output_timer;
     copy_device_to_host();
@@ -1004,6 +1013,17 @@ std::string Solver::stop_reason() const {
         return "t_wall_stop = " + logging::duration(double(t_wall_stop)) + " reached";
     }
     return "";
+}
+
+bool Solver::state_needed() const {
+    if (!stop_reason().empty() || step % check_interval == 0) return true;
+    for (const auto & writer : data_writers) {
+        if (writer->due(step, t)) return true;
+    }
+    for (const auto & monitor : force_monitors) {
+        if (step % monitor.interval == 0) return true;
+    }
+    return integral_monitor.interval > 0 && step % integral_monitor.interval == 0;
 }
 
 double Solver::progress() const {
@@ -1096,10 +1116,14 @@ void Solver::print_setup() const {
     if (check_nan) logging::item("NaN check", "every step");
     if (double_flux) logging::item("Double flux", "frozen gamma and e0 per cell and step (not energy conservative)");
     if (reacting) {
-        logging::item("Chemistry", std::to_string(kinetics.n_reactions) + " reactions, Strang splitting, RODAS (rtol " +
+        logging::item("Chemistry", std::to_string(kinetics.n_reactions) + " reactions, Strang splitting" +
+                                       (fuse_chemistry ? " (half steps fused)" : "") + ", RODAS (rtol " +
                                        real(chemistry_options.integrator.rtol) + ", atol " +
                                        real(chemistry_options.atol_Y) + ")" +
-                                       (T_frozen > 0.0 ? ", frozen below " + real(T_frozen) + " K" : ""));
+                                       (T_frozen > 0.0 ? ", frozen below " + real(T_frozen) + " K" : "") + ", " +
+                                       (cell_chemistry.lanes() == 1 ? std::string("one thread per cell")
+                                                                    : std::to_string(cell_chemistry.lanes()) +
+                                                                          " lanes per cell"));
     }
 
     logging::section("Boundaries");
@@ -1203,7 +1227,8 @@ void Solver::write_data(bool force) {
 void Solver::take_step() {
     if (reacting) {
         Kokkos::deep_copy(chem_cost, 0.0_r);
-        advance_chemistry(0.5 * static_cast<double>(dt));
+        advance_chemistry(chemistry_pending + 0.5 * static_cast<double>(dt));
+        chemistry_pending = 0.0;
         halo_current = false;
     }
     if (double_flux) {
@@ -1215,7 +1240,13 @@ void Solver::take_step() {
         cells_frozen = false;
         reset_energy();
     }
-    if (reacting) advance_chemistry(0.5 * static_cast<double>(dt));
+    if (reacting) {
+        if (defer_chemistry) {
+            chemistry_pending = 0.5 * static_cast<double>(dt);
+        } else {
+            advance_chemistry(0.5 * static_cast<double>(dt));
+        }
+    }
     halo_current = false;
     Kokkos::fence();
     step++;

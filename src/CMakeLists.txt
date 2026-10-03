@@ -21,6 +21,8 @@ add_library(MallardCore STATIC
     numerics/time_integrator.cpp
     physics/mixture.cpp
     physics/physics.cpp
+    solver/cell_chemistry.cpp
+    solver/chemistry_benchmark.cpp
     solver/solver.cpp
     solver/solver_chemistry.cpp
     solver/solver_initialize.cpp
