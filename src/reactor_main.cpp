@@ -231,12 +231,13 @@ void benchmark(const toml::value & input) {
     logging::items({
         {"Benchmark", std::to_string(n_cells) + " cells from " + std::to_string(n_samples) + " trajectory states (" +
                           std::to_string(n_igniting) + " igniting cells)"},
-        {"Execution", (cells.lanes() == 1 ? "one thread per cell" + std::string(cells.binned() ? ", binned by cost" : "")
+        {"Execution", (cells.lanes() == 1 ? std::string("one thread per cell")
                                            : std::to_string(cells.threads()) + " x " + std::to_string(cells.lanes()) +
                                                  " lanes per cell" +
                                                  (cells.shared_bytes() > 0 ? ", " + std::to_string(cells.shared_bytes() / 1024) +
                                                                                  " KiB in team scratch"
                                                                            : std::string(", global memory"))) +
+                          (cells.binned() ? ", ordered by cost" : "") +
                           (cells.sparse_entries() > 0 ? ", sparse LU (" + std::to_string(cells.sparse_entries()) + " entries)"
                                                       : ", dense LU")},
         {"Tolerances", "rtol = " + brief(options.integrator.rtol) + ", atol = " + brief(options.atol_Y)},
@@ -244,10 +245,12 @@ void benchmark(const toml::value & input) {
     std::ofstream out(output);
     if (!out) throw InputError("cannot write benchmark.output = \"" + output + "\".");
     out << "mechanism,species,reactions,threads,lanes,shared,cells,igniting,dt,active,seconds,cells_per_second,"
-           "mean_substeps,max_substeps\n";
+           "mean_substeps,max_substeps,histogram\n";
     for (const double dt : dts) {
         double best = 1e300, mean_steps = 0.0, max_steps = 0.0;
         uint64_t active = 0;
+        // Cells per bin of sub-steps (accepted and rejected): 0 (skipped), 1, 2, 3-4, 5-8, ..., more than 2^13
+        std::vector<uint64_t> histogram(16, 0);
         Kokkos::deep_copy(chem_h, 0.0_r);
         for (uint32_t r = 0; r <= repeats; r++) {
             // The first call warms up and sets each cell's first sub-step; every call starts from the same states
@@ -266,20 +269,33 @@ void benchmark(const toml::value & input) {
             active = stats.active;
             auto h_cost = Kokkos::create_mirror_view_and_copy(Kokkos::HostSpace(), chem_cost);
             double sum = 0.0, largest = 0.0;
+            std::fill(histogram.begin(), histogram.end(), 0);
             for (uint32_t c = 0; c < n_cells; c++) {
-                sum += static_cast<double>(h_cost(c));
-                largest = std::max(largest, static_cast<double>(h_cost(c)));
+                const double steps = static_cast<double>(h_cost(c));
+                sum += steps;
+                largest = std::max(largest, steps);
+                const size_t bin = steps < 1.0 ? 0 : 1 + static_cast<size_t>(std::ceil(std::log2(steps)));
+                histogram[std::min(bin, histogram.size() - 1)]++;
             }
             mean_steps = active > 0 ? sum / static_cast<double>(active) : 0.0;
             max_steps = largest;
         }
+        std::string bins;
+        for (size_t b = 0; b < histogram.size(); b++) {
+            if (histogram[b] == 0) continue;
+            const uint64_t low = b <= 1 ? b : (uint64_t(1) << (b - 2)) + 1, high = b == 0 ? 0 : uint64_t(1) << (b - 1);
+            bins += (bins.empty() ? "" : " ") + std::to_string(low) +
+                    (high > low ? (b + 1 == histogram.size() ? "+" : "-" + std::to_string(high)) : "") + ":" +
+                    std::to_string(histogram[b]);
+        }
         logging::items({{"dt = " + brief(dt) + " s", brief(n_cells / best) + " cells/s (" + brief(best * 1e3) +
                                                          " ms), " + std::to_string(active) + " active, sub-steps mean " +
-                                                         brief(mean_steps) + ", max " + brief(max_steps)}});
+                                                         brief(mean_steps) + ", max " + brief(max_steps)},
+                        {"  sub-steps: cells", bins}});
         out << mech.file << "," << ns << "," << mech.reactions.size() << "," << cells.threads() << ","
             << cells.lanes() << "," << cells.shared_bytes() << "," << n_cells << ","
             << n_igniting << "," << dt << "," << active << "," << best << "," << n_cells / best << "," << mean_steps
-            << "," << max_steps << "\n";
+            << "," << max_steps << "," << bins << "\n";
     }
 }
 
