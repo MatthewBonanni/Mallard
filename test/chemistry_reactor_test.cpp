@@ -459,7 +459,9 @@ TEST(ChemistryReactorTest, SparseLUSolvesLikeTheDenseOne) {
                 for (uint32_t j = 0; j < n; j++) {
                     EXPECT_NEAR(Js[i * n + j] + u[i] * pattern.v(j), J[i * n + j], 1e-12 * row_norm)
                         << name << " state " << s << " J " << i << " " << j;
-                    if (!in_pattern[i * n + j]) EXPECT_EQ(Js[i * n + j], 0.0) << name << " outside the pattern " << i << " " << j;
+                    if (!in_pattern[i * n + j]) {
+                        EXPECT_EQ(Js[i * n + j], 0.0) << name << " outside the pattern " << i << " " << j;
+                    }
                 }
             }
             // A step size where the Newton matrix is far from diagonal

@@ -34,7 +34,7 @@ struct ReactorOptions {
  * @brief Whether a mechanism's reactors use the sparse LU: as options.sparse
  *        says, or automatically from 30 species when the factors of the
  *        static pattern fill at most 60% of the dense matrix (GRI-3.0 53%:
- *        sparse; on an A100 the sparse LU is 2.5x faster at 100 species).
+ *        sparse; on an A100 the sparse LU is about 3x faster at 100 species).
  */
 inline bool use_sparse_lu(const ReactorOptions & options, const Mechanism & mechanism) {
     if (options.sparse >= 0) return options.sparse == 1;

@@ -25,8 +25,8 @@ measure the imbalance between cells), and the execution: `lanes` (vector
 lanes per cell, 1 for one thread per cell, 0 automatic), `threads` (team
 threads per cell), `shared` (-1 automatic, 0: work memory in global memory)
 and `bin_by_cost` (one thread per cell: order cells by their last cost).
-`[chemistry] sparse = true/false` chooses the LU (sparse above 100 species by
-default). V3 with the large mechanism: `python tools/v3_check.py
+`[chemistry] sparse = true/false` chooses the LU (by default sparse from 30 species
+when it pays: GRI-3.0 and larger). V3 with the large mechanism: `python tools/v3_check.py
 <build>/src/MallardReactor` against `chemistry/nhexane_ignition.csv`.
 
 ## `solver/`: full solver
