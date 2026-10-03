@@ -278,9 +278,11 @@ void CellChemistry::init(const Mixture & gas_in, const chemistry::Mechanism & me
     options = options_in;
     const uint32_t ns = gas.n_species;
     const uint32_t lanes_max = static_cast<uint32_t>(TeamPolicy<false, false>::vector_length_max());
+    // Host backends report a long vector length too, but one thread runs a team's lanes one after another
+    constexpr bool gpu = !Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, Kokkos::HostSpace>::accessible;
     if (options.lanes == 0) {
-        // A warp per cell where the device has lanes and the mechanism fills them
-        n_lanes = (lanes_max >= 32 && ns >= 16) ? 32 : 1;
+        // A warp per cell where the mechanism fills it
+        n_lanes = (gpu && lanes_max >= 32 && ns >= 16) ? 32 : 1;
     } else {
         if ((options.lanes & (options.lanes - 1)) != 0) {
             throw std::invalid_argument("chemistry.lanes must be a power of 2.");
@@ -288,9 +290,10 @@ void CellChemistry::init(const Mixture & gas_in, const chemistry::Mechanism & me
         n_lanes = std::min(options.lanes, lanes_max);
     }
     n_threads = n_lanes == 1 ? 1 : (options.threads > 0 ? options.threads : 1);
-    // On GPUs only: neighboring threads of a warp get cells of similar cost, and teams start with the most
-    // expensive cells, so that cheap ones fill in behind them
-    bin_by_cost = options.bin_by_cost && lanes_max >= 32;
+    // On GPUs, neighboring threads of a warp get cells of similar cost, and teams start with the most expensive
+    // cells, so that cheap ones fill in behind them. CPU threads take contiguous blocks of the queue, which
+    // sorting would load with all the expensive cells
+    bin_by_cost = options.bin_by_cost && gpu;
     if (n_lanes * n_threads > 32) throw std::invalid_argument("chemistry: at most 32 threads and lanes per cell.");
     sparse = chemistry::use_sparse_lu(options.reactor, mechanism);
     if (sparse) pattern = chemistry::make_sparse_lu_pattern(mechanism);
