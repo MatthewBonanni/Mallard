@@ -138,7 +138,7 @@ Status: prototyped and measured on A100s (milestone 7); not adopted, because a r
 | DMR 1.84M | 16 | 115k | 20,274 | 3.60 | 1.19 | 0.40 | 8.1 s of 73 s (11%) |
 
 - **Where the time goes** (Riemann 1M, 8 GPUs, per stage with fences between phases): the smooth TENO pass takes 0.85 ms on every rank, the troubled passes 0.04-0.31 ms, the fluxes 0.11 ms. Splitting the troubled passes (milestone 5) already removed most of the imbalance this section was meant to fix.
-- **A rebalance costs** 5.0 s at 125k cells/GPU and 21.6 s at 500k (TENO export 1.3 s, TENO repacking 1.0 s, `cells_independent_of_halo` 1.0 s, data exchange 0.7 s, local mesh 0.6 s, partition 0.2 s at 125k), against 14 s or more with recomputed stencils. A weighted curve split moves 9-13% of the cells (85-130k of 1M) or 6% (252k of 4M).
+- **A rebalance costs** 5.0 s at 125k cells/GPU and 21.6 s at 500k (TENO export 1.3 s, TENO repacking 1.0 s, `cells_independent_of_halo` 1.0 s, data exchange 0.7 s, local mesh 0.6 s, partition 0.2 s at 125k); recomputing the stencils instead would add the 6-7 s of the startup's TENO setup. A weighted curve split moves 9-13% of the cells (85-130k of 1M) or 6% (252k of 4M).
 - **The pattern moves faster than a rebalance pays back.** Forced rebalances (Riemann 1M, 8 GPUs) took the imbalance from 1.25 to 1.05; it was back to 1.2-1.3 within 2,000-4,000 steps, and a partition weighted for earlier shock positions became worse than the uniform one. Stepping took 3.85-4.03 ms instead of 3.80, plus 5 s per rebalance. On Riemann 4M (8 GPUs) one rebalance cost 21.6 s and left 11.2 ms/step unchanged. The probe steps cost under 1%.
 
 #### 10.3 Why not, and what would change it
