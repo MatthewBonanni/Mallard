@@ -858,8 +858,11 @@ node) for h2o2 and GRI-3.0, and of 5 for n-dodecane at 1e-8 s. At 1e-6 s the
 large mechanisms' igniting cells take far more sub-steps on the A100 than on
 CPUs from the same states (n-dodecane 108 against 5, n-hexane up to 44
 against 6), which makes the A100 slower than 16 cores there (28.9k against
-52.7k, 190 against 2.1k cells per second); ignition delays on the A100 still
-match Cantera (V3), so this is a step-size issue, open for later. On the full
+52.7k, 190 against 2.1k cells per second). There the A100 accepts 106
+sub-steps (and rejects 2) where the CPU builds take 5, with or without the
+sparse LU and the lanes, so its error estimates for these states are far
+larger; ignition delays on the A100 still match Cantera (V3). This is open,
+to be traced before large mechanisms run at flame-like `dt` on GPUs. On the full
 solver (2400 x 40 cells, h2o2, 20 steps; 2400 x 4 cells, GRI-3.0, 10 steps;
 both "hot") milestone 8 and this milestone take 163-169 and 179 ms per step
 (h2o2) and 295 and 270 ms (GRI-3.0); on CPUs the automatic choice is one
