@@ -93,6 +93,13 @@ class DistributedMesh {
         std::vector<int> owners_of_owned(const std::vector<int> & new_owner) const;
 
         /**
+         * @brief Entries of a per-block-cell array (e.g. a copy of block_owner()
+         *        from before a redistribution) for any global cells, from the
+         *        ranks whose blocks hold them (collective).
+         */
+        std::vector<int> block_entries(const std::vector<int> & per_block, const std::vector<uint64_t> & cells) const;
+
+        /**
          * @brief This rank's mesh: its owned cells in global order, then
          *        halo_layers layers of vertex neighbors, each in global order.
          *        Faces on the global boundary keep their zones; faces towards

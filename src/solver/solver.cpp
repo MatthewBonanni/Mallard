@@ -67,6 +67,7 @@ int Solver::init(const toml::value & input_in) {
     logging::section("Setup");
     init_run_parameters();
     timed_phase("mesh", [&] { init_mesh(); });
+    t_mesh_phase = t_wall_setup;
     timed_phase("physics and boundaries", [&] {
         init_physics();
         init_boundaries();
@@ -89,7 +90,6 @@ int Solver::init(const toml::value & input_in) {
         register_data();
         init_output();
     });
-    rebalance_cost = comm::allreduce(t_wall_setup, comm::Op::MAX);
     timed_phase("initial solution", [&] { init_solution(); });
     logging::begin_phase("total");
     logging::end_phase(t_wall_setup);
@@ -576,6 +576,9 @@ void Solver::init_numerics() {
 
     face_reconstruction->set_mesh(mesh);
     face_reconstruction->set_boundaries(boundary_data);
+    if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get()); teno && teno_records) {
+        teno->reuse_records(teno_records);
+    }
     face_reconstruction->init(face_reconstruction_input);
 
     rhs_func = [this](State solution, State rhs, rtype t_stage) { calc_rhs(solution, rhs, t_stage); };
@@ -813,7 +816,10 @@ int Solver::run() {
     std::string stop;
     window_step = step;
     window_busy = 0.0;
+    window_measured = 0;
     while ((stop = stop_reason()).empty()) {
+        const bool measured = setup && step + MEASURED_STEPS >= window_step + rebalance_policy.interval;
+        halo.fence_before_wait(measured);
         Kokkos::Timer step_timer;
         const double waited = comm::wait_seconds();
         calc_dt();
@@ -822,7 +828,10 @@ int Solver::run() {
         if (setup) count_troubled();
         const double step_seconds = step_timer.seconds();
         t_wall_stepping += step_seconds;
-        window_busy += step_seconds - (comm::wait_seconds() - waited);
+        if (measured) {
+            window_busy += step_seconds - (comm::wait_seconds() - waited);
+            window_measured++;
+        }
         if (setup && step - window_step >= rebalance_policy.interval) consider_rebalance();
         if (step % check_interval == 0) {
             Kokkos::Timer check_timer;

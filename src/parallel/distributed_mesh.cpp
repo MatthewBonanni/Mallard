@@ -448,6 +448,24 @@ std::vector<int> DistributedMesh::owners_of_owned(const std::vector<int> & new_o
     return std::vector<int>(received.begin(), received.end());
 }
 
+std::vector<int> DistributedMesh::block_entries(const std::vector<int> & per_block,
+                                                const std::vector<uint64_t> & cells_wanted) const {
+    const int p = comm::size();
+    std::vector<std::vector<uint64_t>> asked(p);
+    for (uint64_t g : cells_wanted) asked[rank_of_cell(g)].push_back(g);
+    const auto requests = comm::exchange(std::vector<std::vector<uint64_t>>(asked));
+    std::vector<std::vector<uint64_t>> answers(p);
+    for (int r = 0; r < p; r++) {
+        for (uint64_t g : requests.from(r)) answers[r].push_back(uint64_t(per_block[g - block.first_cell]));
+    }
+    const auto answered = comm::exchange(std::move(answers));
+    // Answers come back in the order of the questions, rank by rank
+    std::vector<uint64_t> next(answered.offsets.begin(), answered.offsets.end() - 1);
+    std::vector<int> entries(cells_wanted.size());
+    for (size_t i = 0; i < cells_wanted.size(); i++) entries[i] = int(answered.data[next[rank_of_cell(cells_wanted[i])]++]);
+    return entries;
+}
+
 void DistributedMesh::grow_layer() {
     const int p = comm::size();
     const uint8_t layer = layers + 1;

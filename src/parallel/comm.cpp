@@ -23,10 +23,13 @@ namespace comm {
 namespace {
 
 double waited = 0.0;
+double exchanged_bytes = 0.0, exchange_time = 0.0;
 
 } // namespace
 
 double wait_seconds() { return waited; }
+
+double exchange_bandwidth() { return exchange_time > 0.0 ? exchanged_bytes / exchange_time : 0.0; }
 
 void add_wait(double seconds) { waited += seconds; }
 
@@ -170,9 +173,12 @@ Received<T> exchange(std::vector<std::vector<T>> && send) {
         received.offsets[r + 1] = recv_displs[r + 1];
     }
     received.data.resize(recv_displs[p]);
+    const auto start = std::chrono::steady_clock::now();
     check(MPI_Alltoallv(send_flat.data(), send_counts.data(), send_displs.data(), mpi_type<T>(),
                         received.data.data(), recv_counts.data(), recv_displs.data(), mpi_type<T>(), MPI_COMM_WORLD),
           "MPI_Alltoallv");
+    exchange_time += std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    exchanged_bytes += double(send_displs[p] + recv_displs[p]) * sizeof(T);
     return received;
 }
 

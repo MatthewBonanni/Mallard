@@ -161,6 +161,7 @@ class Solver {
         uint32_t get_step() const { return step; }
         const Euler & get_physics() const { return physics; }
         std::shared_ptr<Mesh> get_mesh() const { return mesh; }
+        const FaceReconstruction * get_face_reconstruction() const { return face_reconstruction.get(); }
 
         /** @brief The solution: flow block and species partial densities. */
         State state() const { return State(conservatives, species); }
@@ -220,10 +221,13 @@ class Solver {
         double troubled_cost = 0.0;                // Troubled-cell cost in smooth cells, fitted at checks
         Kokkos::View<uint32_t *> troubled_steps;   // Per owned cell: steps troubled in the current window
         uint64_t window_step = 0;                  // Step the current window started at
-        double window_busy = 0.0;                  // Stepping time minus waits for other ranks in the window
-        double rebalance_cost = 0.0;               // Predicted wall time of a rebalance
+        double window_busy = 0.0;                  // Step time minus waits in the window's measured steps
+        uint64_t window_measured = 0;              // Measured steps in the window
+        double rebalance_cost = 0.0;               // Wall time of the last rebalance
+        double t_mesh_phase = 0.0;                 // Wall time of the setup's mesh phase
         uint32_t n_rebalances = 0;
         double last_imbalance = 0.0;               // At the last check, 0 before any
+        std::shared_ptr<const std::vector<uint64_t>> teno_records;  // TENO data carried over by a rebalance
         std::string partitioner;
         Distribution distribution;
         HaloExchange halo;
@@ -233,6 +237,8 @@ class Solver {
         void init_rhs_split();
         void count_troubled();
         void consider_rebalance();
+        std::shared_ptr<const std::vector<uint64_t>> gather_teno_records(const std::vector<uint64_t> & own,
+                                                                         const std::vector<int> & old_owner) const;
 
         template <typename T_riemann_solver>
         void launch_flux_functor();

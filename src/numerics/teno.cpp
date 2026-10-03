@@ -20,6 +20,7 @@
 #include <string>
 #include <utility>
 #include <tuple>
+#include <unordered_map>
 #include <stdexcept>
 #include <vector>
 
@@ -486,26 +487,172 @@ void download_tables(const TENO & scheme, const std::vector<uint64_t> & large_sl
     small_rows(scheme).download(scheme.stencil_small, small_slices, c0, n_small, tables);
 }
 
+
+constexpr uint64_t NO_FACE = ~uint64_t(0);
+// Faces are keyed by their cell 0 and their position in its faces; no cell has 8
+constexpr uint64_t FACE_SLOTS = 8;
+
+uint64_t to_word(const rtype x) {
+    uint64_t w = 0;
+    std::memcpy(&w, &x, sizeof(rtype));
+    return w;
+}
+
+rtype from_word(const uint64_t w) {
+    rtype x;
+    std::memcpy(&x, &w, sizeof(rtype));
+    return x;
+}
+
+/** @brief Global keys of the local mesh's cells and faces, both ways. */
+class GlobalKeys {
+    public:
+        explicit GlobalKeys(const Mesh & local_mesh) : mesh(local_mesh) {}
+
+        uint64_t cell_key(const int32_t c) const { return mesh.h_global_cell(c); }
+
+        uint64_t face_key(const int32_t f) const {
+            if (f < 0) return NO_FACE;
+            const int32_t c = mesh.h_cells_of_face(f, 0);
+            uint64_t k = 0;
+            while (int32_t(mesh.h_face_of_cell(c, k)) != f) k++;
+            return mesh.h_global_cell(c) * FACE_SLOTS + k;
+        }
+
+        /** @brief Index the local cells by global id (before cell() and face()). */
+        void index_cells() {
+            for (uint32_t c = 0; c < mesh.n_cells; c++) local.emplace(mesh.h_global_cell(c), c);
+        }
+
+        /** @brief Local cell of a global id, -1 if it is not in the local mesh. */
+        int32_t cell(const uint64_t key) const {
+            const auto it = local.find(key);
+            return it == local.end() ? -1 : int32_t(it->second);
+        }
+
+        /** @brief Local face of a key; -1 for none, -2 if it is not in the local mesh. */
+        int32_t face(const uint64_t key) const {
+            if (key == NO_FACE) return -1;
+            const int32_t c = cell(key / FACE_SLOTS);
+            if (c < 0 || key % FACE_SLOTS >= mesh.h_n_faces_of_cell(c)) return -2;
+            return mesh.h_face_of_cell(c, key % FACE_SLOTS);
+        }
+
+    private:
+        const Mesh & mesh;
+        std::unordered_map<uint64_t, uint32_t> local;
+};
+
+/** @brief Append the record of a cell's tables, with global keys, to words. */
+void write_record(const GlobalKeys & keys, const uint64_t gid, const CellTables & t, std::vector<uint64_t> & words) {
+    words.push_back(gid);
+    const size_t length_at = words.size();
+    words.push_back(0);
+    words.push_back(t.gather_depth);
+    words.push_back(to_word(t.scale));
+    words.push_back(t.large_cells.size());
+    for (uint16_t n : t.small_size) words.push_back(n);
+    for (rtype x : t.basis_mean) words.push_back(to_word(x));
+    for (rtype x : t.si) words.push_back(to_word(x));
+    for (int32_t c : t.large_cells) words.push_back(keys.cell_key(c));
+    for (int32_t f : t.large_faces) words.push_back(keys.face_key(f));
+    for (rtype x : t.large_pinv) words.push_back(to_word(x));
+    for (int32_t c : t.small_cells) words.push_back(keys.cell_key(c));
+    for (int32_t f : t.small_faces) words.push_back(keys.face_key(f));
+    for (rtype x : t.small_pinv) words.push_back(to_word(x));
+    words[length_at] = words.size() - length_at - 1;
+}
+
+/** @brief The tables of a record, false if it names a cell or face missing from the local mesh. */
+bool read_record(const GlobalKeys & keys, const uint64_t * w, const uint8_t nk, CellTables & t) {
+    t.gather_depth = uint8_t(*w++);
+    t.scale = from_word(*w++);
+    const size_t n_large = *w++;
+    size_t n_small = 0;
+    for (uint16_t & n : t.small_size) n_small += (n = uint16_t(*w++));
+    t.basis_mean.resize(nk);
+    for (rtype & x : t.basis_mean) x = from_word(*w++);
+    t.si.resize(nk * (nk + 1) / 2);
+    for (rtype & x : t.si) x = from_word(*w++);
+    auto cells = [&](std::vector<int32_t> & out, size_t n) {
+        out.resize(n);
+        for (int32_t & c : out) c = keys.cell(*w++);
+        return std::find(out.begin(), out.end(), -1) == out.end();
+    };
+    auto faces = [&](std::vector<int32_t> & out, size_t n) {
+        out.resize(n);
+        for (int32_t & f : out) f = keys.face(*w++);
+        return std::find(out.begin(), out.end(), -2) == out.end();
+    };
+    auto values = [&](std::vector<rtype> & out, size_t n) {
+        out.resize(n);
+        for (rtype & x : out) x = from_word(*w++);
+    };
+    const bool large_ok = cells(t.large_cells, n_large) && faces(t.large_faces, n_large);
+    if (!large_ok) return false;
+    values(t.large_pinv, n_large * nk);
+    const bool small_ok = cells(t.small_cells, n_small) && faces(t.small_faces, n_small);
+    if (!small_ok) return false;
+    values(t.small_pinv, n_small * teno::NK_SMALL);
+    return true;
+}
+
+/** @brief The records init() may take, by the local cell they describe. */
+class Reuse {
+    public:
+        Reuse(const Mesh & local_mesh, const std::vector<uint64_t> * records, const uint8_t n_dof)
+            : keys(local_mesh), mesh(local_mesh), nk(n_dof) {
+            if (records == nullptr || records->empty()) return;
+            keys.index_cells();
+            for (size_t i = 0; i < records->size(); i += 2 + (*records)[i + 1]) {
+                const int32_t c = keys.cell((*records)[i]);
+                if (c >= 0) at.emplace(c, records->data() + i + 2);
+            }
+        }
+
+        /** @brief Fill t from the cell's record, if there is a usable one. */
+        bool fill(const uint32_t i, CellTables & t, uint32_t & invalid_small) const {
+            const auto it = at.find(i);
+            if (it == at.end() || !read_record(keys, it->second, nk, t)) {
+                t = CellTables();
+                return false;
+            }
+            for (uint32_t k = 0; k < mesh.h_n_faces_of_cell(i); k++) invalid_small += t.small_size[k] == 0;
+            return true;
+        }
+
+    private:
+        GlobalKeys keys;
+        const Mesh & mesh;
+        const uint8_t nk;
+        std::unordered_map<uint32_t, const uint64_t *> at;
+};
+
 /**
  * @brief Run precompute(i, tables, failed_large, invalid_small) over the
  *        reconstructed cells chunk by chunk, moving each chunk's tables to
  *        the device arrays. Returns the largest central stencil.
  */
 template <typename F>
-uint16_t precompute_in_chunks(TENO & scheme, const uint32_t n_reconstructed, F && precompute, uint32_t & n_failed_large,
-                              uint32_t & n_invalid_small) {
+uint16_t precompute_in_chunks(TENO & scheme, const uint32_t n_reconstructed, const Reuse & reuse, F && precompute,
+                              uint32_t & n_failed_large, uint32_t & n_invalid_small, uint32_t & n_reused) {
     TableBuilder builder(scheme, n_reconstructed);
     std::vector<CellTables> chunk;
     uint16_t ns_used = 0;
     for (uint32_t c0 = 0; c0 < n_reconstructed; c0 += CHUNK_CELLS) {
         chunk.assign(std::min(CHUNK_CELLS, n_reconstructed - c0), CellTables());
-        uint32_t failed = 0, invalid = 0;
+        uint32_t failed = 0, invalid = 0, reused = 0;
         Kokkos::parallel_reduce("teno_precompute",
                                 Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace, Kokkos::Schedule<Kokkos::Dynamic>>(
                                     c0, c0 + chunk.size()),
-                                [&](const uint32_t i, uint32_t & failed_large, uint32_t & invalid_small) {
-            precompute(i, chunk[i - c0], failed_large, invalid_small);
-        }, failed, invalid);
+                                [&](const uint32_t i, uint32_t & failed_large, uint32_t & invalid_small, uint32_t & n) {
+            if (reuse.fill(i, chunk[i - c0], invalid_small)) {
+                n++;
+            } else {
+                precompute(i, chunk[i - c0], failed_large, invalid_small);
+            }
+        }, failed, invalid, reused);
+        n_reused += reused;
         n_failed_large += failed;
         n_invalid_small += invalid;
         for (const CellTables & t : chunk) ns_used = std::max<uint16_t>(ns_used, t.large_cells.size());
@@ -926,7 +1073,10 @@ void TENO::compute_stencils_and_matrices() {
         }
     };
     // Outer halo cells are never reconstructed; their neighborhoods are cut off
-    largest_stencil = precompute_in_chunks(*this, mesh->n_reconstructed(), precompute, n_failed_large, n_invalid_small);
+    const Reuse records(*mesh, reuse.get(), n_dof_large);
+    n_reused = 0;
+    largest_stencil = precompute_in_chunks(*this, mesh->n_reconstructed(), records, precompute, n_failed_large,
+                                           n_invalid_small, n_reused);
 
     if (n_failed_large > 0) {
         throw std::runtime_error("TENO: could not build a full-rank large stencil for " +
@@ -1433,7 +1583,10 @@ void TENO::compute_stencils_and_matrices_3d() {
         }
     };
     // Outer halo cells are never reconstructed; their neighborhoods are cut off
-    largest_stencil = precompute_in_chunks(*this, mesh->n_reconstructed(), precompute, n_failed_large, n_invalid_small);
+    const Reuse records(*mesh, reuse.get(), n_dof_large);
+    n_reused = 0;
+    largest_stencil = precompute_in_chunks(*this, mesh->n_reconstructed(), records, precompute, n_failed_large,
+                                           n_invalid_small, n_reused);
 
     if (n_failed_large > 0) {
         throw std::runtime_error("TENO: could not build a full-rank large stencil for " +
@@ -2341,6 +2494,34 @@ uint8_t TENO::cached_halo_layers(const toml::value & input) {
         return 0;
     }
     return header.halo_layers;
+}
+
+double TENO::bytes_per_cell() const {
+    const double n = std::max<size_t>(scale.extent(0), 1);
+    double bytes = double(scale.span() + basis_mean.span() + si_matrix.span()) * sizeof(rtype);
+    for (const teno::PackedStencils * packed : {&stencil_large, &stencil_small}) {
+        bytes += double(packed->cells.span() + packed->faces.span()) * sizeof(int32_t) +
+                 double(packed->pinv.span()) * sizeof(rtype);
+    }
+    return bytes / n;
+}
+
+std::vector<uint64_t> TENO::export_records(const std::vector<uint32_t> & cells) const {
+    const uint32_t n_reconstructed = scale.extent(0);
+    const auto large_slices = host_slice_start(stencil_large);
+    const auto small_slices = host_slice_start(stencil_small);
+    const GlobalKeys keys(*mesh);
+    std::vector<uint64_t> words;
+    std::vector<CellTables> chunk;
+    auto next = cells.begin();
+    for (uint32_t c0 = 0; c0 < n_reconstructed && next != cells.end(); c0 += CHUNK_CELLS) {
+        const uint32_t c1 = std::min(c0 + CHUNK_CELLS, n_reconstructed);
+        if (*next >= c1) continue;
+        chunk.assign(c1 - c0, CellTables());
+        download_tables(*this, large_slices, small_slices, c0, chunk);
+        for (; next != cells.end() && *next < c1; ++next) write_record(keys, mesh->h_global_cell(*next), chunk[*next - c0], words);
+    }
+    return words;
 }
 
 void TENO::save_cache(const uint8_t halo_layers) {
