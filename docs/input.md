@@ -205,9 +205,11 @@ the zone's faces whose centers satisfy the expression.
 Finite-rate chemistry of gas mixtures (`gas = "mixture"` with a mechanism
 that has reactions). Each step is Strang split: every owned cell that needs
 it is advanced as an adiabatic, constant-volume reactor over `dt / 2`, then
-the flow takes its step, then the reactors take another `dt / 2`. The
-integrator is RODAS, an adaptive Rosenbrock method with the analytical
-Jacobian, in double precision in every build.
+the flow takes its step, then the reactors take another `dt / 2`; the second
+half step is fused with the next step's first (one chemistry call per step)
+except before output, progress rows and the end of the run. The integrator
+is RODAS, an adaptive Rosenbrock method with the analytical Jacobian, in
+double precision in every build.
 
 | Key | Description |
 |---|---|
@@ -218,6 +220,9 @@ Jacobian, in double precision in every build.
 | `atol` | Absolute tolerance on the mass fractions (default `1e-10`) |
 | `max_steps` | Sub-steps allowed per cell and half step (default 100000); more stop the run |
 | `T_frozen` | No chemistry in cells below this temperature (default 0) |
+| `fuse_half_steps` | `false` applies both half steps in every step (default `true`) |
+| `sparse` | `true` for the sparse LU (static pattern, with the Jacobian's dense rank-one part by Sherman-Morrison), `false` for the dense one; default sparse above 100 species |
+| `lanes` | Vector lanes integrating one cell: 1 for one thread per cell (cells ordered by their last cost), a power of 2 up to 32 for a team per cell on GPUs; default 0, automatic: a warp per cell on GPUs from 16 species, else one thread |
 
 Cells whose mass fractions would change by less than `atol / 100` over the
 half step at their current rates are skipped. Reaction types: elementary,
@@ -326,6 +331,8 @@ CSV (`t`, `T`, `p`, `Y_<species>`). It reads `[physics]` (`mechanism`,
 | `[chemistry] rtol` | Relative tolerance on `Y` and `T` (default `1e-6`) |
 | `[chemistry] atol` | Absolute tolerance on `Y` (default `1e-10`) |
 | `[chemistry] max_steps` | Sub-steps allowed per output interval (default 100000) |
+| `[chemistry] sparse` | The linear solver, as in the solver's `[chemistry]` |
+| `[benchmark]` | Instead of the run, a chemistry benchmark: states sampled along this reactor's trajectory, replicated over `cells` cells and advanced by the solver's chemistry kernels over each splitting step of `dt`; see `benchmarks/README.md` |
 
 It prints the ignition delay (time of the maximum of `dT/dt`) when `T` rose
 by more than 400 K. Example: `examples/h2_ignition`.

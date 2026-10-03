@@ -18,7 +18,8 @@
 #include <Kokkos_Sort.hpp>
 
 
-namespace {
+// A named namespace: functors in an anonymous one make GCC warn about the visibility of the lanes' closures
+namespace cell_chemistry_kernels {
 
 constexpr double WORK_MEMORY_BYTES = 1024.0 * 1024.0 * 1024.0;
 
@@ -265,7 +266,9 @@ struct HeatReleaseFunctor {
     }
 };
 
-} // namespace
+} // namespace cell_chemistry_kernels
+
+using namespace cell_chemistry_kernels;
 
 void CellChemistry::init(const Mixture & gas_in, const chemistry::Mechanism & mechanism,
                          const chemistry::KineticsTable<> & kinetics_in, const CellChemistryOptions & options_in,
