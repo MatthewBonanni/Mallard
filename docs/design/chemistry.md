@@ -1,7 +1,7 @@
 # Design: finite-rate chemistry
 
 Status: accepted (see [Decisions on the open questions](#decisions-on-the-open-questions)).
-Implementation follows the [milestones](#10-milestones); done: 1, 2, 3, 4, 5, 6, 7.
+Implementation follows the [milestones](#10-milestones); done: 1, 2, 3, 4, 5, 6, 7, 8.
 
 Mallard today solves a single calorically perfect gas. This document adds
 multicomponent, thermally perfect mixtures and finite-rate chemistry with
@@ -456,6 +456,25 @@ between levels, constant outside, rates at one pressure summed) and
 Chebyshev reactions use `p = C_total R T`, so their Jacobian gains
 `d q / d C_j = q (d ln k / d ln p) / C_total` for every `j` and
 `d q / dT` a `(d ln k / d ln p) / T` term.
+
+Validation (MUSCL, HLLC, SSPRK3, h2o2 mechanism, default tolerances):
+- V7 (`examples/detonation_1d`): with this mechanism the recombination zone
+  of 2H2-O2-7Ar at 6.67 kPa is about 0.8 m (ZND), so a detonation started by
+  a driver at a closed end stays under-supported over practical tubes (it
+  ran steadily 9% below D_CJ over 0.6 m). The case therefore starts from the
+  ZND profile (`tools/znd_restart.py`) instead of an overdriven start. Front
+  speed against D_CJ = 1616.9 m/s: +0.11%, +0.01%, 0.00% at 10, 20, 40 cells
+  per ZND induction length (1.525 mm); induction length -4.5%, -1.8%, +2.7%
+  (one cell at 40 is 2.5%); peak pressure 174.8 kPa against the von
+  Neumann 174.7 kPa.
+- V6 (`examples/reactive_shock_tube`): reaction front at 230 us at
+  99.625, 99.662, 99.644 mm with 50, 25, 12.5 um cells (within one coarse
+  cell of the finest); peak T 2875.2, 2876.1, 2876.6 K and peak p 316.6,
+  315.7, 315.7 kPa.
+- A100 with one cell per thread: these 1D cases (2,400 to 16,000 cells) run
+  at 0.2-2 M cells/s, latency-bound (4-14 ms per step, 60-90% in chemistry);
+  a CPU with 8 threads reaches 0.6 M cells/s on them. Milestone 10's
+  team-per-cell kernels and larger meshes are what the GPU needs.
 
 ## 5. Chemistry
 
