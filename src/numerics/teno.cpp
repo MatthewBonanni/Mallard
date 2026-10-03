@@ -53,8 +53,10 @@ constexpr double MAX_LEBESGUE = 10.0;
 constexpr double LATTICE_ANISOTROPY = 1.0 + 1e-6;
 constexpr double SPACING_ANISOTROPY = 2.5;
 
-// Node offsets of congruent cells agree to this fraction of the cell's extent
-constexpr double CONGRUENCE_TOL = 0.1;
+// Node offsets of congruent cells agree to this fraction of the cell's extent:
+// round-off, not the jitter or grading of general meshes, which keep the
+// neighbors' cut-off
+constexpr double CONGRUENCE_TOL = 1e-3;
 
 /**
  * @brief Gauss-Legendre nodes and weights on [-1, 1] (Newton iteration).
@@ -325,7 +327,7 @@ std::array<double, 9> spacing_metric(const double m[9], const double anisotropy)
  *        tiling's lattice, whatever the cells' shapes. False where the
  *        neighbors hold no such three.
  */
-bool lattice_moment(const Mesh & mesh, const uint32_t i, double m[9]) {
+[[maybe_unused]] bool lattice_moment(const Mesh & mesh, const uint32_t i, double m[9]) {
     using Point = std::array<double, 3>;
     auto node_offsets = [&](const uint32_t c) {
         std::vector<Point> p(mesh.h_n_nodes_of_cell(c));
