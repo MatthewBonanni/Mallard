@@ -15,13 +15,13 @@
 #
 # Run:
 #   ../../build3d/src/Mallard -i input.toml
-#   python ../../tools/plot_sphere.py solut
+#   python ../../tools/plot_sphere.py slices
 #
 # Expected result: the bow shock forms within t ~ 0.5 (D / u units) and
-# settles by t ~ 1.2 at Delta / R = 0.225, 10% above Billig: the shock sits
+# settles by t ~ 1.2 at Delta / R = 0.226, 10% above Billig: the shock sits
 # 0.01 D upstream of the correlation, under half the tetrahedron edge length in
 # the shock layer (0.025 D, so the standoff spans four cells). Pressure drag
-# coefficient 0.96. About an hour on four A100 GPUs.
+# coefficient 0.95. About 1.5 hours on four A100 GPUs.
 
 [run]
 t_stop = 3.0
