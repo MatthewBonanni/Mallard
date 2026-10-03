@@ -18,10 +18,15 @@
 #   ../../build3d/src/Mallard -i input.toml
 #   python ../../tools/sedov.py solut --energy 1
 #
-# Expected result at t = 0.8: the shock at R = 0.947 (exact), the density
+# Expected result at t = 0.8: the shock at R = 0.945 (exact), the density
 # jumping to (gamma + 1) / (gamma - 1) = 6 behind it and falling to vacuum at
-# the center, with the shell spherical. Here: R = ... (...%) and a peak density
-# of ... (the jump is spread over ~3 cells). ... on one A100.
+# the center. Here the shock radius (where the shell-averaged density crosses
+# the middle of its jump) is 1.1% ahead of R(t) at t = 0.8 and 2.6% at
+# t = 0.1, the offset left by the finite initial blast radius. The density
+# profile follows the exact one, with the peak smeared to 4.2 (shell average;
+# the jump spans about three cells). The shell stays spherical (2.5% spread
+# at the peak), and mass is conserved to round-off. About 1.5 hours on four
+# A100 GPUs (half of it TENO setup); TENO5 on 2.1M cells needs at least 3.
 
 [run]
 t_stop = 0.8
