@@ -81,7 +81,7 @@ int Solver::init(const toml::value & input_in) {
     }
     // The cache describes the local mesh at this halo depth
     if (auto * teno = dynamic_cast<TENO *>(face_reconstruction.get())) teno->save_cache(halo_layers);
-    if (!rebalancing) setup.reset();
+    if (!rebalance_policy.enabled) setup.reset();
     timed_phase("fields and output", [&] {
         allocate_memory();
         init_rhs_split();
@@ -89,6 +89,7 @@ int Solver::init(const toml::value & input_in) {
         register_data();
         init_output();
     });
+    rebalance_cost = comm::allreduce(t_wall_setup, comm::Op::MAX);
     timed_phase("initial solution", [&] { init_solution(); });
     logging::begin_phase("total");
     logging::end_phase(t_wall_setup);
@@ -200,7 +201,8 @@ void Solver::init_mesh() {
             if (partitioner != "graph" && partitioner != "hilbert") {
                 throw InputError("parallel.partitioner = \"" + partitioner + "\" is not one of: graph, hilbert.");
             }
-            rebalancing = toml::find_or<bool>(input, "parallel", "rebalance", false);
+            rebalance_policy = RebalancePolicy::from_input(input);
+            troubled_cost = rebalance_policy.troubled_cost;
             setup = std::make_unique<DistributedMesh>(read_mesh_block(input), Mesh::periodic_pairs(input));
             setup->distribute(partitioner == "graph" ? partition_graph(*setup, comm::size())
                                                      : partition_hilbert(*setup, comm::size()));
@@ -699,6 +701,7 @@ void Solver::allocate_memory() {
         viscous_gradients = Kokkos::View<rtype *[N_CONSERVATIVE][N_DIM]>("viscous_gradients", mesh->n_cells);
         viscous_gradient = make_vertex_gradient(make_gradient(*mesh, boundary_data, W_cells, viscous_gradients), *mesh);
     }
+    troubled_steps = Kokkos::View<uint32_t *>("troubled_steps", setup ? mesh->n_owned() : 0);
     h_conservatives = Kokkos::create_mirror_view(conservatives);
     h_species = Kokkos::create_mirror_view(species);
     h_primitives = Kokkos::create_mirror_view(primitives);
@@ -808,12 +811,19 @@ int Solver::run() {
         t_wall_output += output_timer.seconds();
     }
     std::string stop;
+    window_step = step;
+    window_busy = 0.0;
     while ((stop = stop_reason()).empty()) {
         Kokkos::Timer step_timer;
+        const double waited = comm::wait_seconds();
         calc_dt();
         take_step();
         check_fields();
-        t_wall_stepping += step_timer.seconds();
+        if (setup) count_troubled();
+        const double step_seconds = step_timer.seconds();
+        t_wall_stepping += step_seconds;
+        window_busy += step_seconds - (comm::wait_seconds() - waited);
+        if (setup && step - window_step >= rebalance_policy.interval) consider_rebalance();
         if (step % check_interval == 0) {
             Kokkos::Timer check_timer;
             print_progress();
@@ -942,11 +952,18 @@ void Solver::print_summary(const std::string & stop) const {
     logging::item("Stopped", stop + " at step " + logging::count(step) + ", t = " + logging::real(double(t)));
     logging::item("Wall time", duration(total) + ": setup " + duration(t_wall_setup) + ", time stepping " +
                                    duration(t_wall_stepping) + ", diagnostics " + duration(t_wall_checks) +
-                                   ", output " + duration(t_wall_output));
+                                   ", output " + duration(t_wall_output) +
+                                   (setup ? ", rebalancing " + duration(t_wall_rebalance) : ""));
     if (steps > 0 && t_wall_stepping > 0.0) {
         logging::item("Throughput", logging::si(n_cells_global * steps / t_wall_stepping) + " cells/s, " +
                                         duration(t_wall_stepping / steps) + " per step over " +
                                         logging::count(steps) + " steps");
+    }
+    if (setup && last_imbalance > 0.0) {
+        logging::item("Rebalancing", logging::format("%u rebalances (%.1f%% of wall time), imbalance %.2f at the last "
+                                                     "check, troubled cells cost %.1f smooth cells",
+                                                     n_rebalances, 100.0 * t_wall_rebalance / total, last_imbalance,
+                                                     troubled_cost));
     }
     std::string files;
     auto add = [&](const std::string & text) { files += (files.empty() ? "" : ", ") + text; };

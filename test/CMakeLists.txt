@@ -7,6 +7,7 @@ set(MALLARD_TEST_SOURCES
     comm_test.cpp
     mesh_block_test.cpp
     distributed_mesh_test.cpp
+    load_balance_test.cpp
 )
 if(Mallard_DIM EQUAL 2)
     list(APPEND MALLARD_TEST_SOURCES

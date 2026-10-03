@@ -98,9 +98,11 @@ void HaloExchange::start(const State & U) {
 void HaloExchange::finish(const State & U) {
     if (!active()) return;
 #ifdef Mallard_HAS_MPI
+    const double t0 = MPI_Wtime();
     if (MPI_Waitall(static_cast<int>(requests.size()), requests.data(), MPI_STATUSES_IGNORE) != MPI_SUCCESS) {
         throw std::runtime_error("HaloExchange: MPI_Waitall failed");
     }
+    comm::add_wait(MPI_Wtime() - t0);
     const uint32_t stride = n_values;
     const uint32_t n_species = U.n_species();
     Kokkos::View<uint32_t *> r_cells = recv_cells;

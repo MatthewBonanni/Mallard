@@ -224,6 +224,11 @@ Used when Mallard runs on several MPI ranks (`mpirun -n N Mallard -i input.toml`
 | Key | Description |
 |---|---|
 | `partitioner` | `graph` (dKaMinPar on the cell connectivity, minimizing the faces between ranks; default when built with `Mallard_ENABLE_KAMINPAR`) or `hilbert` (cells split along a Hilbert curve of their centroids; the default otherwise) |
+| `rebalance` | Move cells between ranks during the run when their measured work is unbalanced, e.g. by TENO's troubled cells near moving shocks (default `false`). Results are bitwise the same either way |
+| `rebalance_interval` | Steps between imbalance checks (default 100) |
+| `rebalance_threshold` | Rebalance when the busiest rank works more than this times the mean (default 1.1), and the predicted saving is more than twice the cost |
+| `rebalance_max_cost` | Fraction of the run's wall time rebalancing may take in total (default 0.01) |
+| `troubled_cost` | Cost of a TENO troubled cell in smooth cells until the ranks' timings give a fit (default 8) |
 
 ## `[output]`
 

@@ -32,6 +32,7 @@
 #include "distributed_mesh.h"
 #include "distribution.h"
 #include "halo_exchange.h"
+#include "load_balance.h"
 #include "log.h"
 
 struct ForceMonitor {
@@ -138,8 +139,9 @@ class Solver {
          *        everything that depends on the partition. The solution stays
          *        bitwise that of a run without rebalancing (collective;
          *        distributed runs with parallel.rebalance = true).
+         * @return Number of cells that changed owner, over all ranks.
          */
-        void rebalance(const std::vector<uint64_t> & weights);
+        uint64_t rebalance(const std::vector<uint64_t> & weights);
 
         // Public because nvcc rejects device lambdas in non-public member functions
         void update_average_pressure_outlets(StateView solution);
@@ -214,7 +216,14 @@ class Solver {
         bool distribute = true;
         int halo_layers = 0;
         std::unique_ptr<DistributedMesh> setup;  // during init, or the whole run when rebalancing
-        bool rebalancing = false;
+        RebalancePolicy rebalance_policy;
+        double troubled_cost = 0.0;                // Troubled-cell cost in smooth cells, fitted at checks
+        Kokkos::View<uint32_t *> troubled_steps;   // Per owned cell: steps troubled in the current window
+        uint64_t window_step = 0;                  // Step the current window started at
+        double window_busy = 0.0;                  // Stepping time minus waits for other ranks in the window
+        double rebalance_cost = 0.0;               // Predicted wall time of a rebalance
+        uint32_t n_rebalances = 0;
+        double last_imbalance = 0.0;               // At the last check, 0 before any
         std::string partitioner;
         Distribution distribution;
         HaloExchange halo;
@@ -222,6 +231,8 @@ class Solver {
         int base_halo_layers() const;
         bool halo_too_shallow();
         void init_rhs_split();
+        void count_troubled();
+        void consider_rebalance();
 
         template <typename T_riemann_solver>
         void launch_flux_functor();
@@ -256,6 +267,7 @@ class Solver {
         double t_wall_stepping = 0.0;
         double t_wall_checks = 0.0;
         double t_wall_output = 0.0;
+        double t_wall_rebalance = 0.0;
         double t_wall_run_start = 0.0;
         double t_stepping_last_check = 0.0;
         double progress_run_start = 0.0;
