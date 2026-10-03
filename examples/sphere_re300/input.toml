@@ -13,8 +13,8 @@
 #
 # Refining the mesh by 1.4 in every direction changes St by 0.2%, Cd by 0.4%
 # and Cl by 5%. Lift oscillates by +-0.014 about its mean, drag by +-0.0026.
-# Cl is measured along the mean lift: the plane of symmetry, picked by the
-# initial kick, drifts slowly about the x axis (13-26 degrees from x-y).
+# Cl is the magnitude of the mean lift. The plane of symmetry, set near x-y by
+# the initial kick, drifts slowly about the x axis (13-26 degrees from x-y).
 #
 # Mesh: prism boundary layer (10 layers from 0.005 D) and tetrahedra refined
 # through the near wake, on the full box x = -15..30, |y|, |z| < 15 (the wake
@@ -47,7 +47,7 @@ filename = "sphere.msh"
 type = "analytical"
 rho = "1.0"
 # Potential flow around the sphere, plus a transverse kick behind it that
-# picks the x-y plane as the plane of symmetry of the wake
+# starts the wake's instability near the x-y plane
 u = ["0.2 * (1 + 0.0625 / (x^2 + y^2 + z^2)^1.5 - 0.1875 * x^2 / (x^2 + y^2 + z^2)^2.5)",
      "-0.0375 * x * y / (x^2 + y^2 + z^2)^2.5 + 0.04 * exp(-((x - 1.5)^2 + y^2 + z^2))",
      "-0.0375 * x * z / (x^2 + y^2 + z^2)^2.5"]
