@@ -246,8 +246,9 @@ struct WideCountFunctor {
  *        threads x lanes on an execution space instance; the failures go to a device scalar.
  */
 template <typename Space>
-inline void launch_teams(const Space & space, const AdvanceFunctor & functor, const uint32_t league, const uint32_t threads,
-                  const uint32_t lanes, const bool sparse, const size_t fast_bytes, const Kokkos::View<uint32_t> & failures) {
+inline void launch_teams(const Space & space, const AdvanceFunctor & functor, const uint32_t league,
+                         const uint32_t threads, const uint32_t lanes, const bool sparse, const size_t fast_bytes,
+                         const Kokkos::View<uint32_t> & failures) {
     const size_t scratch = chemistry::TeamLanes<Member>::scratch_bytes(lanes * threads) + fast_bytes + 64;
     auto launch = [&](auto policy) {
         policy.set_scratch_size(0, Kokkos::PerTeam(scratch));
